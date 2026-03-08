@@ -3,7 +3,7 @@
 XP Waste is a desktop focus timer for RuneScape players.
 It uses a Pomodoro-style cycle to help you train consistently and avoid idle downtime.
 
-<img width="482" height="632" alt="image" src="https://github.com/user-attachments/assets/c1c4ff41-9acf-47d2-bdb4-a98e073124f5" />
+<img width="482" height="632" alt="image" src="https://github.com/user-attachments/assets/e71c30dd-0d49-459b-8f46-d249c16a5c4b" />
 
 ## Quick Start (Windows)
 
