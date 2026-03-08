@@ -95,6 +95,7 @@ class XPWasteWindow(QMainWindow):
         self._custom_sound_file = None
         self._skip_increments_cycle = False
         self._minimum_log_seconds = 60
+        self._theme = "runescape"
         focus_time = self.timer.FOCUS_TIME
         short_break_time = self.timer.SHORT_BREAK_TIME
         long_break_time = self.timer.LONG_BREAK_TIME
@@ -108,6 +109,9 @@ class XPWasteWindow(QMainWindow):
                     self._custom_sound_file = settings.get("custom_sound_file", None)
                     self._skip_increments_cycle = settings.get("skip_increments_cycle", False)
                     self._minimum_log_seconds = max(0, int(settings.get("minimum_log_seconds", 60)))
+                    loaded_theme = settings.get("theme", "runescape")
+                    if loaded_theme in ("runescape", "dark"):
+                        self._theme = loaded_theme
 
                     # Load timer settings and apply to current countdown
                     focus_time = settings.get("focus_time", focus_time)
@@ -130,6 +134,7 @@ class XPWasteWindow(QMainWindow):
                 "custom_sound_file": self._custom_sound_file,
                 "skip_increments_cycle": self._skip_increments_cycle,
                 "minimum_log_seconds": self._minimum_log_seconds,
+                "theme": self._theme,
                 "focus_time": self.timer.FOCUS_TIME,
                 "short_break_time": self.timer.SHORT_BREAK_TIME,
                 "long_break_time": self.timer.LONG_BREAK_TIME,
@@ -156,8 +161,6 @@ class XPWasteWindow(QMainWindow):
         settings_menu.addSeparator()
         about_action = settings_menu.addAction("About XP Waste...")
         about_action.triggered.connect(self._show_about_dialog)
-        self.theme_action = settings_menu.addAction("Switch to Normal Mode")
-        self.theme_action.triggered.connect(self._toggle_theme)
 
         # Title
         title_label = QLabel("XP Waste")
@@ -780,20 +783,6 @@ class XPWasteWindow(QMainWindow):
                 QApplication.beep()
         # "none" option plays no sound
 
-    def _toggle_theme(self):
-        """Toggles between runescape and normal themes."""
-        if self._theme == "runescape":
-            new_theme = "dark"
-        else:
-            new_theme = "runescape"
-        self._set_theme(new_theme)
-        # Update menu text
-        if hasattr(self, "theme_action"):
-            if self._theme == "runescape":
-                self.theme_action.setText("Switch to Normal Mode")
-            else:
-                self.theme_action.setText("Switch to OSRS Mode")
-
     def _show_about_dialog(self):
         """Shows information about XP Waste prevention and efficient training."""
         about_text = """
@@ -813,6 +802,7 @@ It helps you stay consistent, track progress, and reduce downtime between traini
 <ul>
 <li>OSRS-inspired theme and a clean normal theme</li>
 <li>Custom timer durations and cycle length</li>
+<li>Timer Settings include color mode selection and minimum history log seconds</li>
 <li>Custom notification sounds (wav, mp3, ogg, m4a)</li>
 <li>Session history with second-accurate active study tracking</li>
 <li>Manual focus/break switching and cycle progress controls</li>
@@ -820,7 +810,8 @@ It helps you stay consistent, track progress, and reduce downtime between traini
 
 <p><em>Tip: By default, skipping a focus session does not advance the cycle.
 You can enable skip-to-increment behavior in Timer Settings. Active study time
-counts only while the timer is running, so paused time is not included.</em></p>
+counts only while the timer is running, so paused time is not included. Use
+minimum history log seconds to avoid tiny history entries.</em></p>
         """
         
         msg = QMessageBox(self)
@@ -888,10 +879,11 @@ counts only while the timer is running, so paused time is not included.</em></p>
             custom_sound_file=self._custom_sound_file,
             skip_increments_cycle=self._skip_increments_cycle,
             minimum_log_seconds=self._minimum_log_seconds,
+            current_theme=self._theme,
             parent=self,
         )
         if dialog.exec_() == QDialog.Accepted:
-            focus, short_break, long_break, cycle_length, sound_setting, sound_file, skip_behavior, min_log_seconds = dialog.get_values()
+            focus, short_break, long_break, cycle_length, sound_setting, sound_file, skip_behavior, min_log_seconds, selected_theme = dialog.get_values()
             self.timer.set_durations(focus, short_break, long_break, reset_current=True)
             self.timer.set_cycle_length(cycle_length)
             self.timer.set_minimum_log_seconds(min_log_seconds)
@@ -899,6 +891,7 @@ counts only while the timer is running, so paused time is not included.</em></p>
             self._custom_sound_file = sound_file
             self._skip_increments_cycle = skip_behavior
             self._minimum_log_seconds = min_log_seconds
+            self._set_theme(selected_theme)
             self._save_settings()  # Save settings to file
             self._update_cycle_label()
 
@@ -1058,7 +1051,7 @@ class DurationSettingsDialog(QDialog):
 
     def __init__(self, focus_minutes, short_break_minutes, long_break_minutes, cycle_length, 
                  notification_sound="system", custom_sound_file=None, skip_increments_cycle=False,
-                 minimum_log_seconds=60, parent=None):
+                 minimum_log_seconds=60, current_theme="runescape", parent=None):
         super().__init__(parent)
         self.setWindowTitle("Timer Settings")
         # Remove the question mark help button
@@ -1115,6 +1108,11 @@ class DurationSettingsDialog(QDialog):
         self.skip_checkbox.setChecked(skip_increments_cycle)
         self.skip_checkbox.setToolTip("When checked, skipping a focus session will still count toward cycle progress")
 
+        self.theme_combo = QComboBox()
+        self.theme_combo.setView(QListView())
+        self.theme_combo.addItems(["OSRS Mode", "Normal Mode"])
+        self.theme_combo.setCurrentIndex(0 if current_theme == "runescape" else 1)
+
         self.min_log_spin = QSpinBox()
         self.min_log_spin.setRange(0, 3600)
         self.min_log_spin.setValue(max(0, int(minimum_log_seconds)))
@@ -1125,6 +1123,7 @@ class DurationSettingsDialog(QDialog):
         form_layout.addRow("Short Break:", self.short_break_spin)
         form_layout.addRow("Long Break:", self.long_break_spin)
         form_layout.addRow("Cycles:", self.cycle_spin)
+        form_layout.addRow("Color Mode:", self.theme_combo)
         form_layout.addRow("Min Log Seconds:", self.min_log_spin)
         form_layout.addRow("Notification Sound:", self.sound_combo)
         form_layout.addRow("Custom Sound File:", self.sound_file_button)
@@ -1225,6 +1224,7 @@ class DurationSettingsDialog(QDialog):
         # Convert sound combo selection to setting string
         sound_options = ["system", "custom", "none"]
         sound_setting = sound_options[self.sound_combo.currentIndex()]
+        theme_setting = "runescape" if self.theme_combo.currentIndex() == 0 else "dark"
         
         return (
             self.focus_spin.value(),
@@ -1235,6 +1235,7 @@ class DurationSettingsDialog(QDialog):
             self.custom_sound_file,
             self.skip_checkbox.isChecked(),
             self.min_log_spin.value(),
+            theme_setting,
         )
 
 

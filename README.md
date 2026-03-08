@@ -30,9 +30,10 @@ If you trust the file source, click:
 ## Features
 
 - OSRS mode and Normal mode themes
-- Configurable focus, short break, long break, and cycle length
+- Configurable focus, short break, long break, cycle length, and color mode in Timer Settings
 - Manual session controls (Focus, Short Break, Long Break)
 - Optional custom notification sounds (`.wav`, `.mp3`, `.ogg`, `.m4a`)
+- Configurable minimum history log seconds to reduce tiny history entries
 - Stopwatch-style active study tracking (second-accurate)
 - Session history with daily and overall totals based on active study time
 - Windows standalone executable support via PyInstaller
@@ -78,7 +79,8 @@ Or direct command:
 
 - Runtime files in `data/` are user-specific and should not be committed.
 - Study tracking counts only active timer runtime; paused time is excluded.
-- Skipping a focus session still records elapsed active study time when at least 60 seconds were completed.
+- Skipping or pausing focus sessions records elapsed active study time only when it meets your configured minimum log seconds threshold.
+- Natural focus completion is always logged.
 - Sound effects are not bundled with this project due to copyright/licensing reasons.
 - If you want Old School RuneScape-style jingles, download them yourself from:
 	`https://oldschool.runescape.wiki/w/Jingles`
