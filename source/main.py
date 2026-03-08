@@ -26,6 +26,7 @@ from PyQt5.QtWidgets import (
     QComboBox,
     QCheckBox,
     QFileDialog,
+    QListView,
 )
 
 from xp_waste_timer import XPWasteTimer
@@ -34,8 +35,19 @@ from session_history import SessionHistoryManager
 
 def _resource_path(relative_path):
     """Return absolute path for dev and PyInstaller onefile contexts."""
-    base_path = getattr(sys, "_MEIPASS", os.path.abspath("."))
+    if hasattr(sys, "_MEIPASS"):
+        base_path = sys._MEIPASS
+    else:
+        # In source mode, resolve resources relative to project root
+        base_path = os.path.abspath(os.path.join(os.path.dirname(__file__), ".."))
     return os.path.join(base_path, relative_path)
+
+
+def _app_root_path():
+    """Return stable writable app root for both source and frozen runs."""
+    if getattr(sys, "frozen", False):
+        return os.path.dirname(sys.executable)
+    return os.path.abspath(os.path.join(os.path.dirname(__file__), ".."))
 
 
 class XPWasteWindow(QMainWindow):
@@ -49,18 +61,22 @@ class XPWasteWindow(QMainWindow):
         super().__init__()
         self.setWindowTitle("XP Waste")
 
+        self._app_root = _app_root_path()
+        self._data_dir = os.path.join(self._app_root, "data")
+
         icon_path = _resource_path(os.path.join("assets", "xpwaste.ico"))
         if os.path.exists(icon_path):
             self.setWindowIcon(QIcon(icon_path))
 
         # Core logic objects
         self.timer = XPWasteTimer(self)
-        self.history_manager = SessionHistoryManager()
+        history_file = os.path.join(self._data_dir, "session_history.json")
+        self.history_manager = SessionHistoryManager(history_file=history_file)
         self._last_session_type = self.timer.current_session_type
         self._theme = "runescape"  # Default to RuneScape theme
         
         # Settings file path
-        self._settings_file = os.path.join("data", "settings.json")
+        self._settings_file = os.path.join(self._data_dir, "settings.json")
         
         # Notification settings (load from file)
         self._load_settings()
@@ -78,6 +94,10 @@ class XPWasteWindow(QMainWindow):
         self._notification_sound = "system" 
         self._custom_sound_file = None
         self._skip_increments_cycle = False
+        focus_time = self.timer.FOCUS_TIME
+        short_break_time = self.timer.SHORT_BREAK_TIME
+        long_break_time = self.timer.LONG_BREAK_TIME
+        cycle_length = self.timer.FOCUS_SESSIONS_BEFORE_LONG_BREAK
         
         try:
             if os.path.exists(self._settings_file):
@@ -86,23 +106,22 @@ class XPWasteWindow(QMainWindow):
                     self._notification_sound = settings.get("notification_sound", "system")
                     self._custom_sound_file = settings.get("custom_sound_file", None)
                     self._skip_increments_cycle = settings.get("skip_increments_cycle", False)
-                    
-                    # Load timer settings
-                    if "focus_time" in settings:
-                        self.timer.FOCUS_TIME = settings["focus_time"]
-                    if "short_break_time" in settings:
-                        self.timer.SHORT_BREAK_TIME = settings["short_break_time"]
-                    if "long_break_time" in settings:
-                        self.timer.LONG_BREAK_TIME = settings["long_break_time"]
-                    if "cycle_length" in settings:
-                        self.timer.FOCUS_SESSIONS_BEFORE_LONG_BREAK = settings["cycle_length"]
+
+                    # Load timer settings and apply to current countdown
+                    focus_time = settings.get("focus_time", focus_time)
+                    short_break_time = settings.get("short_break_time", short_break_time)
+                    long_break_time = settings.get("long_break_time", long_break_time)
+                    cycle_length = settings.get("cycle_length", cycle_length)
+
+            self.timer.set_durations(focus_time, short_break_time, long_break_time, reset_current=True)
+            self.timer.set_cycle_length(cycle_length)
         except Exception as e:
             print(f"Failed to load settings: {e}")
             
     def _save_settings(self):
         """Save settings to file."""
         try:
-            os.makedirs("data", exist_ok=True)
+            os.makedirs(os.path.dirname(self._settings_file), exist_ok=True)
             settings = {
                 "notification_sound": self._notification_sound,
                 "custom_sound_file": self._custom_sound_file,
@@ -357,10 +376,14 @@ class XPWasteWindow(QMainWindow):
                 background-color: #181818;
                 border: 1px solid #3a3125;
                 color: #d8ccb2;
+                outline: 0;
             }
             QListWidget::item:selected {
                 background-color: #2b2218;
                 color: #e6a519;
+            }
+            QListWidget::item:focus {
+                outline: none;
             }
             QSpinBox {
                 background-color: #1a1a1a;
@@ -563,6 +586,14 @@ class XPWasteWindow(QMainWindow):
             QListWidget {
                 background-color: #1e1e1e;
                 border: 1px solid #333333;
+                outline: 0;
+            }
+            QListWidget::item:selected {
+                background-color: #3a3a3a;
+                color: #ffffff;
+            }
+            QListWidget::item:focus {
+                outline: none;
             }
             QSpinBox {
                 background-color: #1e1e1e;
@@ -764,31 +795,27 @@ class XPWasteWindow(QMainWindow):
         about_text = """
 <h2>About XP Waste</h2>
 
-<h3>What is XP Waste Prevention?</h3>
-<p>XP Waste helps RuneScape players maximize their training efficiency using focused 
-sessions inspired by the Pomodoro Technique. Stop wasting XP and start gaining efficiently!</p>
+<p>XP Waste is a focused session timer for RuneScape players, built around a Pomodoro-style loop.
+It helps you stay consistent, track progress, and reduce downtime between training sessions.</p>
 
-<h3>How It Works:</h3>
+<h3>Default Timer Flow</h3>
 <ol>
-<li><strong>Training Session (25 min):</strong> Focus intensely on your skill training</li>
-<li><strong>Break (5 min):</strong> Rest your hands and eyes, check your stats</li>
-<li><strong>Repeat:</strong> After 4 training sessions, take a longer break (15 min)</li>
+<li><strong>Focus:</strong> 25 minutes</li>
+<li><strong>Short Break:</strong> 5 minutes</li>
+<li><strong>Long Break:</strong> 15 minutes every 4 focus sessions</li>
 </ol>
 
-<h3>This App Features:</h3>
+<h3>Features</h3>
 <ul>
-<li><strong>Automatic Cycles:</strong> Timer automatically switches between training and break sessions</li>
-<li><strong>Session Tracking:</strong> Completed training sessions are saved to history</li>
-<li><strong>Manual Controls:</strong> Skip sessions or manually switch session types</li>
-<li><strong>RuneScape Theme:</strong> Beautiful colors inspired by the game you love</li>
-<li><strong>Custom Sounds:</strong> Perfect for authentic RuneScape notification sounds (.ogg supported!)</li>
-<li><strong>Cycle Management:</strong> Use +/- buttons to adjust current cycle progress</li>
-<li><strong>Customizable:</strong> Adjust session durations and cycle length in Settings</li>
-<li><strong>Visual Feedback:</strong> Different colors for each session type</li>
+<li>OSRS-inspired theme and a clean normal theme</li>
+<li>Custom timer durations and cycle length</li>
+<li>Custom notification sounds (wav, mp3, ogg, m4a)</li>
+<li>Session history with daily and overall focus totals</li>
+<li>Manual focus/break switching and cycle progress controls</li>
 </ul>
 
-<p><em>Tip: Skipping a session won't count toward your cycle progress, 
-only naturally completed focus sessions advance the cycle.</em></p>
+<p><em>Tip: By default, skipping a focus session does not advance the cycle.
+You can enable skip-to-increment behavior in Timer Settings.</em></p>
         """
         
         msg = QMessageBox(self)
@@ -854,7 +881,6 @@ only naturally completed focus sessions advance the cycle.</em></p>
             self._skip_increments_cycle = skip_behavior
             self._save_settings()  # Save settings to file
             self._update_cycle_label()
-            QMessageBox.information(self, "Settings Updated", "Timer settings have been updated.")
 
     # ------------------------------------------------------------------ #
     # Timer signal handlers
@@ -1027,6 +1053,7 @@ class DurationSettingsDialog(QDialog):
 
         # Sound notification settings
         self.sound_combo = QComboBox()
+        self.sound_combo.setView(QListView())
         self.sound_combo.addItems(["System Beep", "Custom Sound", "No Sound"])
         if notification_sound == "system":
             self.sound_combo.setCurrentIndex(0)
@@ -1034,6 +1061,7 @@ class DurationSettingsDialog(QDialog):
             self.sound_combo.setCurrentIndex(1)
         else:
             self.sound_combo.setCurrentIndex(2)
+        self._apply_sound_combo_style()
             
         self.sound_file_button = QPushButton("Browse...")
         self.sound_file_button.clicked.connect(self._browse_sound_file)
@@ -1064,6 +1092,77 @@ class DurationSettingsDialog(QDialog):
         buttons.accepted.connect(self.accept)
         buttons.rejected.connect(self.reject)
         layout.addWidget(buttons)
+
+    def _apply_sound_combo_style(self):
+        """Ensure the sound dropdown and popup match the selected app theme."""
+        theme = getattr(self.parent(), "_theme", "runescape")
+        if theme == "runescape":
+            combo_style = """
+            QComboBox {
+                background-color: #1a1a1a;
+                color: #d8ccb2;
+                border: 1px solid #3a3125;
+                border-radius: 4px;
+                padding: 4px 8px;
+                min-height: 20px;
+            }
+            QComboBox:hover {
+                border-color: #694d23;
+            }
+            QComboBox::drop-down {
+                subcontrol-origin: padding;
+                subcontrol-position: top right;
+                width: 20px;
+                border-left: 1px solid #3a3125;
+                background-color: #2b251b;
+            }
+            QComboBox::down-arrow {
+                image: none;
+                width: 0px;
+                height: 0px;
+            }
+            QComboBox QAbstractItemView {
+                background-color: #161616;
+                color: #d8ccb2;
+                border: 1px solid #3a3125;
+                selection-background-color: #2b2218;
+                selection-color: #e6a519;
+            }
+            """
+        else:
+            combo_style = """
+            QComboBox {
+                background-color: #1e1e1e;
+                color: #f0f0f0;
+                border: 1px solid #333333;
+                border-radius: 4px;
+                padding: 4px 8px;
+                min-height: 20px;
+            }
+            QComboBox:hover {
+                border-color: #555555;
+            }
+            QComboBox::drop-down {
+                subcontrol-origin: padding;
+                subcontrol-position: top right;
+                width: 20px;
+                border-left: 1px solid #333333;
+                background-color: #2d2d2d;
+            }
+            QComboBox::down-arrow {
+                image: none;
+                width: 0px;
+                height: 0px;
+            }
+            QComboBox QAbstractItemView {
+                background-color: #1e1e1e;
+                color: #f0f0f0;
+                border: 1px solid #333333;
+                selection-background-color: #3a3a3a;
+                selection-color: #ffffff;
+            }
+            """
+        self.sound_combo.setStyleSheet(combo_style)
         
     def _browse_sound_file(self):
         """Opens a file dialog to select a custom sound file."""

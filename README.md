@@ -1,53 +1,55 @@
-# 🍅⏰ XP Waste 
+# XP Waste
 
-**Stop wasting XP! Start training efficiently! ⚔️**
+XP Waste is a desktop focus timer for RuneScape players.
+It uses a Pomodoro-style cycle to help you train consistently and avoid idle downtime.
 
-## 🚀 Quick Start
+## Features
 
-**Just double-click `XPWaste.exe` to start!**
+- OSRS mode and Normal mode themes
+- Configurable focus, short break, long break, and cycle length
+- Manual session controls (Focus, Short Break, Long Break)
+- Optional custom notification sounds (`.wav`, `.mp3`, `.ogg`, `.m4a`)
+- Session history with daily and overall totals
+- Windows standalone executable support via PyInstaller
 
-No installation required - just run the executable!
+## Default Timer Values
 
----
+- Focus: `25` minutes
+- Short break: `5` minutes
+- Long break: `15` minutes
+- Long break every: `4` focus sessions
 
-## 📁 Folder Structure
+## Project Structure
 
+```text
+xpwaste/
+├── source/                 # Main app source code
+├── assets/                 # App icon and assets
+├── data/                   # Runtime settings and session history
+├── build-tools/            # Build scripts and PyInstaller spec
+├── XPWaste.exe             # Built Windows executable (optional in repo)
+└── README.md
 ```
-📁 xp-waste/
-├── 🎮 XPWaste.exe           ← **MAIN APP - Double-click to run!**
-├── 📊 data/                  ← Your settings & session history  
-├── 🔧 build-tools/           ← Development setup files
-└── 💻 source/                ← Python source code
-```
 
-## ⚡ Features
+## Run From Source
 
-- **🎯 25-minute focused training sessions** 
-- **🛡️ RuneScape-themed interface** (gold & bronze colors - DEFAULT!)
-- **🔔 Custom notification sounds** (supports .ogg files for authentic RS sounds!)
-- **📈 Training session tracking** 
-- **⚙️ Two themes**: RuneScape (default) and Normal
+1. Install Python 3.11+.
+2. Install dependencies:
+	- `pip install -r build-tools/requirements.txt`
+3. Start the app:
+	- `python source/main.py`
 
-## 🎨 Themes
+## Build Executable
 
-- **🏰 RuneScape Theme (Default)**: Authentic gold, bronze, and green colors
-- **🌙 Normal Mode**: Clean neutral interface
+From `build-tools/`:
 
-*Cycle through themes using the View menu!*
+- `build_executable.bat`
 
-## 🎵 Want RuneScape Sounds?
+Or direct command:
 
-1. Visit the [Old School RuneScape Wiki Jingles page](https://oldschool.runescape.wiki/w/Jingles)
-2. Download your favorite sounds (.ogg format works perfectly!)
-3. Set them in the timer's settings menu
+- `python -m PyInstaller --onefile --windowed --distpath "..\\dist" --workpath "..\\build" --add-data "..\\data;data" --add-data "..\\assets;assets" --icon "..\\assets\\xpwaste.ico" --name "XPWaste" --clean "..\\source\\main.py"`
 
-## 🔧 For Developers
+## Notes
 
-- **Source Code**: Check the `source/` folder
-- **Build Tools**: Development scripts in `build-tools/` folder
-
----
-
-**Ready to maximize your efficiency? Double-click `XPWaste.exe` and stop wasting XP!** 🏆
-
-*Not affiliated with Jagex Ltd. RuneScape is a trademark of Jagex Ltd.*
+- Runtime files in `data/` are user-specific and should not be committed.
+- This project is not affiliated with Jagex Ltd.
