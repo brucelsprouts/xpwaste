@@ -30,7 +30,8 @@ If you trust the file source, click:
 - Configurable focus, short break, long break, and cycle length
 - Manual session controls (Focus, Short Break, Long Break)
 - Optional custom notification sounds (`.wav`, `.mp3`, `.ogg`, `.m4a`)
-- Session history with daily and overall totals
+- Stopwatch-style active study tracking (second-accurate)
+- Session history with daily and overall totals based on active study time
 - Windows standalone executable support via PyInstaller
 
 ## Default Timer Values
@@ -73,6 +74,8 @@ Or direct command:
 ## Notes
 
 - Runtime files in `data/` are user-specific and should not be committed.
+- Study tracking counts only active timer runtime; paused time is excluded.
+- Skipping a focus session still records elapsed active study time when at least 60 seconds were completed.
 - Sound effects are not bundled with this project due to copyright/licensing reasons.
 - If you want Old School RuneScape-style jingles, download them yourself from:
 	`https://oldschool.runescape.wiki/w/Jingles`

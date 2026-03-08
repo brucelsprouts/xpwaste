@@ -810,12 +810,13 @@ It helps you stay consistent, track progress, and reduce downtime between traini
 <li>OSRS-inspired theme and a clean normal theme</li>
 <li>Custom timer durations and cycle length</li>
 <li>Custom notification sounds (wav, mp3, ogg, m4a)</li>
-<li>Session history with daily and overall focus totals</li>
+<li>Session history with second-accurate active study tracking</li>
 <li>Manual focus/break switching and cycle progress controls</li>
 </ul>
 
 <p><em>Tip: By default, skipping a focus session does not advance the cycle.
-You can enable skip-to-increment behavior in Timer Settings.</em></p>
+You can enable skip-to-increment behavior in Timer Settings. Active study time
+counts only while the timer is running, so paused time is not included.</em></p>
         """
         
         msg = QMessageBox(self)
@@ -929,16 +930,17 @@ You can enable skip-to-increment behavior in Timer Settings.</em></p>
         date_str = start_dt.strftime("%Y-%m-%d")
         start_str = start_dt.strftime("%H:%M")
         end_str = end_dt.strftime("%H:%M")
-        # Track only full minutes studied (rounded down).
-        duration_minutes = int(duration_seconds // 60)
-        if duration_minutes <= 0:
+        active_seconds = max(0, int(duration_seconds))
+        if active_seconds <= 0:
             return
+        duration_minutes = active_seconds // 60
 
         session_data = {
             "date": date_str,
             "start_time": start_str,
             "end_time": end_str,
             "duration": duration_minutes,
+            "active_seconds": active_seconds,
             "session_type": "Focus",
         }
 
@@ -975,16 +977,16 @@ You can enable skip-to-increment behavior in Timer Settings.</em></p>
         date = session.get("date", "")
         start_time = session.get("start_time", "")
         end_time = session.get("end_time", "")
-        duration = session.get("duration", 0)
-        return f"{date}  {start_time} - {end_time}  ({duration} min)"
+        seconds = session.get("active_seconds")
+        if seconds is None:
+            seconds = int(session.get("duration", 0)) * 60
+        return f"{date}  {start_time} - {end_time}  ({self._format_duration(int(seconds))})"
 
     def _update_total_time_label(self):
-        total_minutes = self.history_manager.get_total_study_time_today()
-        self.total_time_label.setText(f"Today's Focus Time: {total_minutes} min")
-        overall_minutes = sum(
-            session.get("duration", 0) for session in self.history_manager.get_history()
-        )
-        self.overall_time_label.setText(f"Overall Focus Time: {overall_minutes} min")
+        total_seconds = self.history_manager.get_total_study_seconds_today()
+        self.total_time_label.setText(f"Today's Focus Time: {self._format_duration(total_seconds)}")
+        overall_seconds = self.history_manager.get_total_study_seconds_overall()
+        self.overall_time_label.setText(f"Overall Focus Time: {self._format_duration(overall_seconds)}")
         self._update_cycle_label()
 
     def _update_cycle_label(self):
@@ -1015,6 +1017,17 @@ You can enable skip-to-increment behavior in Timer Settings.</em></p>
         minutes = total_seconds // 60
         seconds = total_seconds % 60
         return f"{minutes:02d}:{seconds:02d}"
+
+    @staticmethod
+    def _format_duration(total_seconds):
+        """Formats elapsed seconds as a compact h/m/s label."""
+        total_seconds = max(0, int(total_seconds))
+        hours = total_seconds // 3600
+        minutes = (total_seconds % 3600) // 60
+        seconds = total_seconds % 60
+        if hours > 0:
+            return f"{hours}h {minutes}m {seconds}s"
+        return f"{minutes}m {seconds}s"
 
     def _update_session_background(self, session_type):
         """Updates the root widget background color based on the session type."""

@@ -31,13 +31,16 @@ class XPWasteTimer(QObject):
         # Timer control flags and start time
         self._is_running = False
         self._start_time = None # datetime object when current session started
+        self._focus_active_seconds = 0
 
     def start(self):
         """Starts or resumes the XP Waste session."""
         if not self._is_running:
             self._is_running = True
             self._timer.start() # Start the QTimer
-            self._start_time = datetime.now() # Record start time of the current session
+            # Preserve the original focus-session start time across pauses.
+            if self._current_session_type == "Focus" and self._start_time is None:
+                self._start_time = datetime.now()
             print(f"Timer started. Current session: {self._current_session_type}, Time remaining: {self._time_remaining}s")
 
     def pause(self):
@@ -51,6 +54,8 @@ class XPWasteTimer(QObject):
         """Resets the timer to the beginning of the current session type and resets focus session count."""
         self.pause()
         self._focus_sessions_completed = 0
+        self._start_time = None
+        self._focus_active_seconds = 0
         self._set_session_duration(self._current_session_type) # Reset time remaining for current session type
         self.countdown_updated.emit(self._time_remaining)
         print(f"Timer reset. Current session: {self._current_session_type}, Time remaining: {self._time_remaining}s")
@@ -59,30 +64,33 @@ class XPWasteTimer(QObject):
         """Decrements time remaining and handles session changes when time runs out."""
         if self._time_remaining > 0:
             self._time_remaining -= 1
+            if self._current_session_type == "Focus":
+                self._focus_active_seconds += 1
             self.countdown_updated.emit(self._time_remaining)
         else:
             # Session completed naturally
             self._change_session(completed_naturally=True)
 
-    def _change_session(self, completed_naturally: bool):
+    def _change_session(self, completed_naturally: bool, count_focus_completion: bool | None = None):
         """Determines the next session type based on XP Waste rules and updates the timer state."""
         end_time = datetime.now()
+        if count_focus_completion is None:
+            count_focus_completion = completed_naturally
 
         if self._current_session_type == "Focus":
-            # Record elapsed focus time when a focus session ends naturally or is skipped.
-            # Minutes are rounded down later in the UI layer; skip events only count if
-            # at least one full minute has elapsed.
-            if self._start_time:
-                duration = (end_time - self._start_time).total_seconds()
-                if completed_naturally or duration >= 60:
-                    self.focus_session_completed.emit(
-                        self._start_time.isoformat(),
-                        end_time.isoformat(),
-                        int(duration)
-                    )
+            # Record active focus time (excluding paused periods).
+            duration = int(self._focus_active_seconds)
+            # Keep wall-clock times consistent with active study duration.
+            start_dt = end_time - timedelta(seconds=duration)
+            if completed_naturally or duration >= 60:
+                self.focus_session_completed.emit(
+                    start_dt.isoformat(),
+                    end_time.isoformat(),
+                    duration
+                )
 
-            # Update focus session counter only on natural completion
-            if completed_naturally:
+            # Update focus session counter based on completion behavior.
+            if count_focus_completion:
                 self._focus_sessions_completed += 1
 
             # Decide next session type based on completed focus sessions
@@ -102,6 +110,7 @@ class XPWasteTimer(QObject):
         self.session_changed.emit(self._current_session_type)
         self.countdown_updated.emit(self._time_remaining)
         self._start_time = None  # Will be set when user presses start
+        self._focus_active_seconds = 0
         print(f"Session changed to: {self._current_session_type}. Time remaining: {self._time_remaining}s. Press start to begin.")
 
     def _set_session_duration(self, session_type):
@@ -152,6 +161,11 @@ class XPWasteTimer(QObject):
 
         if reset_current:
             self._set_session_duration(self._current_session_type)
+            if self._current_session_type == "Focus":
+                # Reset active-study stopwatch when user applies a new duration
+                # to the current focus session.
+                self._start_time = None
+                self._focus_active_seconds = 0
             self.countdown_updated.emit(self._time_remaining)
 
     def skip_current_session(self):
@@ -159,8 +173,8 @@ class XPWasteTimer(QObject):
         Immediately ends the current session and transitions to the next one,
         without counting it as a completed focus session.
         """
-        # Skip transitions to the next session without logging a completed focus
-        # session or incrementing the focus session counter.
+        # Skip transitions to the next session without incrementing cycle count.
+        # If at least 60s of focus was completed, elapsed active time is still logged.
         self._change_session(completed_naturally=False)
 
     def skip_current_session_with_increment(self):
@@ -168,8 +182,8 @@ class XPWasteTimer(QObject):
         Immediately ends the current session and transitions to the next one,
         but still counts it as a completed focus session if it was a focus session.
         """
-        # Skip but treat as naturally completed for cycle counting purposes
-        self._change_session(completed_naturally=True)
+        # Skip session, but increment cycle count for focus sessions.
+        self._change_session(completed_naturally=False, count_focus_completion=True)
 
     @property
     def focus_sessions_completed(self):
@@ -207,7 +221,8 @@ class XPWasteTimer(QObject):
 
         self._current_session_type = session_type
         self._set_session_duration(self._current_session_type)
-        self._start_time = datetime.now()
+        self._start_time = None
+        self._focus_active_seconds = 0
         self.session_changed.emit(self._current_session_type)
         self.countdown_updated.emit(self._time_remaining)
 

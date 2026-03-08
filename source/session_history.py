@@ -101,3 +101,29 @@ class SessionHistoryManager:
             if session.get('date') == today:
                 total_duration += session.get('duration', 0)
         return total_duration
+
+    @staticmethod
+    def _session_active_seconds(session):
+        """Returns active study seconds with backward compatibility for old entries."""
+        if "active_seconds" in session:
+            try:
+                return max(0, int(session.get("active_seconds", 0)))
+            except (TypeError, ValueError):
+                return 0
+        try:
+            return max(0, int(session.get("duration", 0)) * 60)
+        except (TypeError, ValueError):
+            return 0
+
+    def get_total_study_seconds_today(self):
+        """Returns total active study seconds for today's sessions."""
+        today = datetime.now().strftime('%Y-%m-%d')
+        return sum(
+            self._session_active_seconds(session)
+            for session in self.history
+            if session.get('date') == today
+        )
+
+    def get_total_study_seconds_overall(self):
+        """Returns total active study seconds across all sessions."""
+        return sum(self._session_active_seconds(session) for session in self.history)
