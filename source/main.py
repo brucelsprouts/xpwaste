@@ -212,12 +212,10 @@ class XPWasteWindow(QMainWindow):
 
         # Control buttons
         controls_layout = QHBoxLayout()
-        self.start_button = QPushButton("Start")
-        self.pause_button = QPushButton("Pause")
+        self.start_pause_button = QPushButton("Start")
         self.skip_button = QPushButton("Skip")
         self.reset_button = QPushButton("Reset")
-        controls_layout.addWidget(self.start_button)
-        controls_layout.addWidget(self.pause_button)
+        controls_layout.addWidget(self.start_pause_button)
         controls_layout.addWidget(self.skip_button)
         controls_layout.addWidget(self.reset_button)
         main_layout.addLayout(controls_layout)
@@ -251,8 +249,7 @@ class XPWasteWindow(QMainWindow):
     def _connect_signals(self):
         """Connects timer signals and button clicks to handlers."""
         # Buttons
-        self.start_button.clicked.connect(self._handle_start)
-        self.pause_button.clicked.connect(self._handle_pause)
+        self.start_pause_button.clicked.connect(self._handle_start_pause_toggle)
         self.skip_button.clicked.connect(self._handle_skip)
         self.reset_button.clicked.connect(self._handle_reset)
         self.focus_session_button.clicked.connect(lambda: self._handle_force_session("Focus"))
@@ -265,6 +262,9 @@ class XPWasteWindow(QMainWindow):
         self.timer.countdown_updated.connect(self._on_countdown_updated)
         self.timer.session_changed.connect(self._on_session_changed)
         self.timer.focus_session_completed.connect(self._on_focus_session_completed)
+
+        # Sync initial state
+        self._update_start_pause_button()
 
     def _load_existing_history(self):
         """Loads previously saved sessions into the history list."""
@@ -828,14 +828,24 @@ You can enable skip-to-increment behavior in Timer Settings.</em></p>
     # ------------------------------------------------------------------ #
     # Button handlers
     # ------------------------------------------------------------------ #
-    def _handle_start(self):
-        self.timer.start()
+    def _handle_start_pause_toggle(self):
+        """Toggles timer running state and button text."""
+        if self.timer.is_running:
+            self.timer.pause()
+        else:
+            self.timer.start()
+        self._update_start_pause_button()
 
-    def _handle_pause(self):
-        self.timer.pause()
+    def _update_start_pause_button(self):
+        """Shows Pause while running, otherwise Start."""
+        if getattr(self.timer, "is_running", False):
+            self.start_pause_button.setText("Pause")
+        else:
+            self.start_pause_button.setText("Start")
 
     def _handle_reset(self):
         self.timer.reset()
+        self._update_start_pause_button()
 
     def _handle_skip(self):
         if self._skip_increments_cycle and self.timer.current_session_type == "Focus":
@@ -845,11 +855,13 @@ You can enable skip-to-increment behavior in Timer Settings.</em></p>
             # Skip without incrementing cycle (default behavior)
             self.timer.skip_current_session()
         self._update_cycle_label()
+        self._update_start_pause_button()
 
     def _handle_force_session(self, session_type: str):
         """Manually switches to a specific session type."""
         self.timer.force_session_type(session_type)
         self._update_cycle_label()
+        self._update_start_pause_button()
 
     def _handle_cycle_increment(self):
         """Increment the current cycle count."""
@@ -899,6 +911,7 @@ You can enable skip-to-increment behavior in Timer Settings.</em></p>
         self._update_session_background(session_type)
         self._update_cycle_label()
         self._last_session_type = session_type
+        self._update_start_pause_button()
 
     def _on_focus_session_completed(self, start_iso, end_iso, duration_seconds):
         """
