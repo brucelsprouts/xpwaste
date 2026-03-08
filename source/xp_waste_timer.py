@@ -32,6 +32,8 @@ class XPWasteTimer(QObject):
         self._is_running = False
         self._start_time = None # datetime object when current session started
         self._focus_active_seconds = 0
+        self._focus_logged_seconds = 0
+        self._minimum_log_seconds = 60
 
     def start(self):
         """Starts or resumes the XP Waste session."""
@@ -46,6 +48,12 @@ class XPWasteTimer(QObject):
     def pause(self):
         """Pauses the XP Waste session."""
         if self._is_running:
+            if self._current_session_type == "Focus":
+                # On pause, log the newly studied segment so history updates
+                # immediately (including sub-minute entries).
+                self._emit_unlogged_focus_time(min_seconds=self._minimum_log_seconds)
+                # Next resume starts a fresh wall-clock segment.
+                self._start_time = None
             self._is_running = False
             self._timer.stop() # Stop the QTimer
             print(f"Timer paused. Time remaining: {self._time_remaining}s")
@@ -56,6 +64,7 @@ class XPWasteTimer(QObject):
         self._focus_sessions_completed = 0
         self._start_time = None
         self._focus_active_seconds = 0
+        self._focus_logged_seconds = 0
         self._set_session_duration(self._current_session_type) # Reset time remaining for current session type
         self.countdown_updated.emit(self._time_remaining)
         print(f"Timer reset. Current session: {self._current_session_type}, Time remaining: {self._time_remaining}s")
@@ -79,14 +88,13 @@ class XPWasteTimer(QObject):
 
         if self._current_session_type == "Focus":
             # Record active focus time (excluding paused periods).
-            duration = int(self._focus_active_seconds)
-            # Keep wall-clock times consistent with active study duration.
-            start_dt = end_time - timedelta(seconds=duration)
-            if completed_naturally or duration >= 60:
-                self.focus_session_completed.emit(
-                    start_dt.isoformat(),
-                    end_time.isoformat(),
-                    duration
+            if completed_naturally:
+                # Always log natural completion, even if threshold is higher.
+                self._emit_unlogged_focus_time(end_time=end_time, min_seconds=1)
+            else:
+                self._emit_unlogged_focus_time(
+                    end_time=end_time,
+                    min_seconds=self._minimum_log_seconds,
                 )
 
             # Update focus session counter based on completion behavior.
@@ -111,7 +119,29 @@ class XPWasteTimer(QObject):
         self.countdown_updated.emit(self._time_remaining)
         self._start_time = None  # Will be set when user presses start
         self._focus_active_seconds = 0
+        self._focus_logged_seconds = 0
         print(f"Session changed to: {self._current_session_type}. Time remaining: {self._time_remaining}s. Press start to begin.")
+
+    def _emit_unlogged_focus_time(self, end_time=None, min_seconds=1):
+        """Emits only the newly accumulated focus seconds that were not logged yet."""
+        if end_time is None:
+            end_time = datetime.now()
+
+        unlogged = int(self._focus_active_seconds - self._focus_logged_seconds)
+        if unlogged < max(1, int(min_seconds)):
+            return
+
+        start_dt = end_time - timedelta(seconds=unlogged)
+        self.focus_session_completed.emit(
+            start_dt.isoformat(),
+            end_time.isoformat(),
+            unlogged,
+        )
+        self._focus_logged_seconds += unlogged
+
+    def set_minimum_log_seconds(self, min_seconds):
+        """Sets the minimum focus-segment length required before adding to history."""
+        self._minimum_log_seconds = max(0, int(min_seconds))
 
     def _set_session_duration(self, session_type):
         """Sets _time_remaining based on the given session type."""
@@ -166,6 +196,7 @@ class XPWasteTimer(QObject):
                 # to the current focus session.
                 self._start_time = None
                 self._focus_active_seconds = 0
+                self._focus_logged_seconds = 0
             self.countdown_updated.emit(self._time_remaining)
 
     def skip_current_session(self):
@@ -223,6 +254,7 @@ class XPWasteTimer(QObject):
         self._set_session_duration(self._current_session_type)
         self._start_time = None
         self._focus_active_seconds = 0
+        self._focus_logged_seconds = 0
         self.session_changed.emit(self._current_session_type)
         self.countdown_updated.emit(self._time_remaining)
 

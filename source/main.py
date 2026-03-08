@@ -94,6 +94,7 @@ class XPWasteWindow(QMainWindow):
         self._notification_sound = "system" 
         self._custom_sound_file = None
         self._skip_increments_cycle = False
+        self._minimum_log_seconds = 60
         focus_time = self.timer.FOCUS_TIME
         short_break_time = self.timer.SHORT_BREAK_TIME
         long_break_time = self.timer.LONG_BREAK_TIME
@@ -106,6 +107,7 @@ class XPWasteWindow(QMainWindow):
                     self._notification_sound = settings.get("notification_sound", "system")
                     self._custom_sound_file = settings.get("custom_sound_file", None)
                     self._skip_increments_cycle = settings.get("skip_increments_cycle", False)
+                    self._minimum_log_seconds = max(0, int(settings.get("minimum_log_seconds", 60)))
 
                     # Load timer settings and apply to current countdown
                     focus_time = settings.get("focus_time", focus_time)
@@ -115,6 +117,7 @@ class XPWasteWindow(QMainWindow):
 
             self.timer.set_durations(focus_time, short_break_time, long_break_time, reset_current=True)
             self.timer.set_cycle_length(cycle_length)
+            self.timer.set_minimum_log_seconds(self._minimum_log_seconds)
         except Exception as e:
             print(f"Failed to load settings: {e}")
             
@@ -126,6 +129,7 @@ class XPWasteWindow(QMainWindow):
                 "notification_sound": self._notification_sound,
                 "custom_sound_file": self._custom_sound_file,
                 "skip_increments_cycle": self._skip_increments_cycle,
+                "minimum_log_seconds": self._minimum_log_seconds,
                 "focus_time": self.timer.FOCUS_TIME,
                 "short_break_time": self.timer.SHORT_BREAK_TIME,
                 "long_break_time": self.timer.LONG_BREAK_TIME,
@@ -883,15 +887,18 @@ counts only while the timer is running, so paused time is not included.</em></p>
             notification_sound=self._notification_sound,
             custom_sound_file=self._custom_sound_file,
             skip_increments_cycle=self._skip_increments_cycle,
+            minimum_log_seconds=self._minimum_log_seconds,
             parent=self,
         )
         if dialog.exec_() == QDialog.Accepted:
-            focus, short_break, long_break, cycle_length, sound_setting, sound_file, skip_behavior = dialog.get_values()
+            focus, short_break, long_break, cycle_length, sound_setting, sound_file, skip_behavior, min_log_seconds = dialog.get_values()
             self.timer.set_durations(focus, short_break, long_break, reset_current=True)
             self.timer.set_cycle_length(cycle_length)
+            self.timer.set_minimum_log_seconds(min_log_seconds)
             self._notification_sound = sound_setting
             self._custom_sound_file = sound_file
             self._skip_increments_cycle = skip_behavior
+            self._minimum_log_seconds = min_log_seconds
             self._save_settings()  # Save settings to file
             self._update_cycle_label()
 
@@ -1050,7 +1057,8 @@ class DurationSettingsDialog(QDialog):
     """Dialog window for adjusting XP Waste durations and cycle length."""
 
     def __init__(self, focus_minutes, short_break_minutes, long_break_minutes, cycle_length, 
-                 notification_sound="system", custom_sound_file=None, skip_increments_cycle=False, parent=None):
+                 notification_sound="system", custom_sound_file=None, skip_increments_cycle=False,
+                 minimum_log_seconds=60, parent=None):
         super().__init__(parent)
         self.setWindowTitle("Timer Settings")
         # Remove the question mark help button
@@ -1107,10 +1115,17 @@ class DurationSettingsDialog(QDialog):
         self.skip_checkbox.setChecked(skip_increments_cycle)
         self.skip_checkbox.setToolTip("When checked, skipping a focus session will still count toward cycle progress")
 
+        self.min_log_spin = QSpinBox()
+        self.min_log_spin.setRange(0, 3600)
+        self.min_log_spin.setValue(max(0, int(minimum_log_seconds)))
+        self.min_log_spin.setButtonSymbols(QSpinBox.NoButtons)
+        self.min_log_spin.setToolTip("Minimum active focus seconds before a segment is added to history. Set 0 to log all segments.")
+
         form_layout.addRow("Focus:", self.focus_spin)
         form_layout.addRow("Short Break:", self.short_break_spin)
         form_layout.addRow("Long Break:", self.long_break_spin)
         form_layout.addRow("Cycles:", self.cycle_spin)
+        form_layout.addRow("Min Log Seconds:", self.min_log_spin)
         form_layout.addRow("Notification Sound:", self.sound_combo)
         form_layout.addRow("Custom Sound File:", self.sound_file_button)
         form_layout.addRow("", self.skip_checkbox)
@@ -1219,6 +1234,7 @@ class DurationSettingsDialog(QDialog):
             sound_setting,
             self.custom_sound_file,
             self.skip_checkbox.isChecked(),
+            self.min_log_spin.value(),
         )
 
 
