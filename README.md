@@ -3,6 +3,25 @@
 XP Waste is a desktop focus timer for RuneScape players.
 It uses a Pomodoro-style cycle to help you train consistently and avoid idle downtime.
 
+## Quick Start (Windows)
+
+Most users can start the app by running the executable directly:
+
+1. Download or open the project folder.
+2. Double-click `XPWaste.exe`.
+
+No Python installation is required to run the `.exe`.
+
+### Windows Security Warning
+
+Because this is an unsigned executable, Windows SmartScreen may show a warning such as
+"Windows protected your PC."
+
+If you trust the file source, click:
+
+1. `More info`
+2. `Run anyway`
+
 ## Features
 
 - OSRS mode and Normal mode themes
