@@ -53,14 +53,14 @@ def _app_root_path():
 
 class XPWasteWindow(QMainWindow):
     """
-    Main application window that connects the XP Waste logic to the UI.
+    Main application window that connects the XPWaste logic to the UI.
     Handles start/pause/reset controls, history display, total study time,
     simple notifications, and optional duration customization.
     """
 
     def __init__(self):
         super().__init__()
-        self.setWindowTitle("XP Waste")
+        self.setWindowTitle("XPWaste")
 
         self._app_root = _app_root_path()
         self._data_dir = os.path.join(self._app_root, "data")
@@ -160,11 +160,11 @@ class XPWasteWindow(QMainWindow):
         durations_action = settings_menu.addAction("Timer Durations...")
         durations_action.triggered.connect(self._open_duration_settings)
         settings_menu.addSeparator()
-        about_action = settings_menu.addAction("About XP Waste...")
+        about_action = settings_menu.addAction("About XPWaste...")
         about_action.triggered.connect(self._show_about_dialog)
 
         # Title
-        title_label = QLabel("XP Waste")
+        title_label = QLabel("XPWaste")
         title_label.setObjectName("TitleLabel")
         title_label.setAlignment(Qt.AlignCenter)
         main_layout.addWidget(title_label)
@@ -792,11 +792,11 @@ class XPWasteWindow(QMainWindow):
         # "none" option plays no sound
 
     def _show_about_dialog(self):
-        """Shows information about XP Waste prevention and efficient training."""
+        """Shows information about XPWaste prevention and efficient training."""
         about_text = """
-<h2>About XP Waste</h2>
+    <h2>About XPWaste</h2>
 
-<p>XP Waste is a focused session timer for RuneScape players, built around a Pomodoro-style loop.
+    <p>XPWaste is a focused session timer for RuneScape players, built around a Pomodoro-style loop.
 It helps you stay consistent, track progress, and reduce downtime between training sessions.</p>
 
 <h3>Default Timer Flow</h3>
@@ -813,17 +813,20 @@ It helps you stay consistent, track progress, and reduce downtime between traini
 <li>Timer Settings include color mode selection and minimum history log seconds</li>
 <li>Custom notification sounds (wav, mp3, ogg, m4a)</li>
 <li>Session history with second-accurate active study tracking</li>
+<li>Right-click history entries to remove them</li>
+<li>Simplified total display shown in the History section</li>
 <li>Manual focus/break switching and cycle progress controls</li>
 </ul>
 
 <p><em>Tip: By default, skipping a focus session does not advance the cycle.
 You can enable skip-to-increment behavior in Timer Settings. Active study time
 counts only while the timer is running, so paused time is not included. Use
-minimum history log seconds to avoid tiny history entries.</em></p>
+minimum history log seconds to avoid tiny history entries. Use right-click on
+history rows to remove specific entries.</em></p>
         """
         
         msg = QMessageBox(self)
-        msg.setWindowTitle("About XP Waste")
+        msg.setWindowTitle("About XPWaste")
         msg.setTextFormat(Qt.RichText)
         msg.setText(about_text)
         msg.setStandardButtons(QMessageBox.Ok)
@@ -1077,7 +1080,7 @@ minimum history log seconds to avoid tiny history entries.</em></p>
 
 
 class DurationSettingsDialog(QDialog):
-    """Dialog window for adjusting XP Waste durations and cycle length."""
+    """Dialog window for adjusting XPWaste durations and cycle length."""
 
     def __init__(self, focus_minutes, short_break_minutes, long_break_minutes, cycle_length, 
                  notification_sound="system", custom_sound_file=None, skip_increments_cycle=False,
