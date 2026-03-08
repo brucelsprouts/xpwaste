@@ -1,4 +1,4 @@
-# XP Waste
+# XP Waste - Pomodoro Timer
 
 XP Waste is a desktop focus timer for RuneScape players.
 It uses a Pomodoro-style cycle to help you train consistently and avoid idle downtime.
