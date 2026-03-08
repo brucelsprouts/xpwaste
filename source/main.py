@@ -27,6 +27,7 @@ from PyQt5.QtWidgets import (
     QCheckBox,
     QFileDialog,
     QListView,
+    QMenu,
 )
 
 from xp_waste_timer import XPWasteTimer
@@ -227,23 +228,20 @@ class XPWasteWindow(QMainWindow):
         controls_layout.addWidget(self.reset_button)
         main_layout.addLayout(controls_layout)
 
-        # Total / overall study time labels (swapped order - overall first)
-        time_totals_layout = QHBoxLayout()
-        self.overall_time_label = QLabel("")
-        self.overall_time_label.setObjectName("OverallTimeLabel")
-        self.total_time_label = QLabel("")
-        self.total_time_label.setObjectName("TotalTimeLabel")
-        time_totals_layout.addWidget(self.overall_time_label)
-        time_totals_layout.addWidget(self.total_time_label)
-        main_layout.addLayout(time_totals_layout)
-
         # History list
         history_group = QGroupBox("History")
         history_group.setObjectName("HistoryGroup")
         history_layout = QVBoxLayout()
         history_group.setLayout(history_layout)
 
+        self.overall_time_label = QLabel("")
+        self.overall_time_label.setObjectName("HistoryOverallLabel")
+        self.overall_time_label.setAlignment(Qt.AlignLeft | Qt.AlignVCenter)
+        history_layout.addWidget(self.overall_time_label)
+
         self.history_list = QListWidget()
+        self.history_list.setContextMenuPolicy(Qt.CustomContextMenu)
+        self.history_list.customContextMenuRequested.connect(self._show_history_context_menu)
         history_layout.addWidget(self.history_list)
 
         main_layout.addWidget(history_group)
@@ -347,10 +345,15 @@ class XPWasteWindow(QMainWindow):
             #SessionLabel, #TimeLabel, #CycleLabel {
                 background-color: transparent;
             }
-            #TotalTimeLabel, #OverallTimeLabel {
+            #TotalTimeLabel {
                 font-size: 14px;
                 margin: 4px 0;
                 color: #cdbb97;
+            }
+            #HistoryOverallLabel {
+                font-size: 12px;
+                margin: 2px 2px 4px 2px;
+                color: #9d8c6f;
             }
             QPushButton {
                 background-color: #2b251b;
@@ -562,9 +565,14 @@ class XPWasteWindow(QMainWindow):
             #SessionLabel, #TimeLabel, #CycleLabel {
                 background-color: transparent;
             }
-            #TotalTimeLabel, #OverallTimeLabel {
+            #TotalTimeLabel {
                 font-size: 14px;
                 margin: 4px 0;
+            }
+            #HistoryOverallLabel {
+                font-size: 12px;
+                margin: 2px 2px 4px 2px;
+                color: #a8a8a8;
             }
             QPushButton {
                 background-color: #2d2d2d;
@@ -972,6 +980,30 @@ minimum history log seconds to avoid tiny history entries.</em></p>
         for session in self.history_manager.get_history():
             self._add_history_item_to_list(session)
 
+    def _show_history_context_menu(self, pos):
+        """Shows right-click actions for a history row."""
+        item = self.history_list.itemAt(pos)
+        if item is None:
+            return
+
+        menu = QMenu(self)
+        remove_action = menu.addAction("Remove Entry")
+        selected_action = menu.exec_(self.history_list.mapToGlobal(pos))
+        if selected_action == remove_action:
+            row = self.history_list.row(item)
+            self._remove_history_entry_by_row(row)
+
+    def _remove_history_entry_by_row(self, row):
+        """Removes a history item using UI row index (newest first display)."""
+        history = self.history_manager.get_history()
+        if row < 0 or row >= len(history):
+            return
+
+        history_index = len(history) - 1 - row
+        if self.history_manager.remove_session_at(history_index):
+            self._refresh_history_list()
+            self._update_total_time_label()
+
     def _format_history_item_text(self, session):
         """Returns display text for a history row."""
         date = session.get("date", "")
@@ -983,10 +1015,8 @@ minimum history log seconds to avoid tiny history entries.</em></p>
         return f"{date}  {start_time} - {end_time}  ({self._format_duration(int(seconds))})"
 
     def _update_total_time_label(self):
-        total_seconds = self.history_manager.get_total_study_seconds_today()
-        self.total_time_label.setText(f"Today's Focus Time: {self._format_duration(total_seconds)}")
         overall_seconds = self.history_manager.get_total_study_seconds_overall()
-        self.overall_time_label.setText(f"Overall Focus Time: {self._format_duration(overall_seconds)}")
+        self.overall_time_label.setText(f"Total: {self._format_duration(overall_seconds)}")
         self._update_cycle_label()
 
     def _update_cycle_label(self):

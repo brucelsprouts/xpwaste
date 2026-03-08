@@ -79,6 +79,14 @@ class SessionHistoryManager:
         self.history.append(session_data)
         self.save_history()
 
+    def remove_session_at(self, index):
+        """Removes a session at index if valid and persists the updated history."""
+        if index < 0 or index >= len(self.history):
+            return False
+        del self.history[index]
+        self.save_history()
+        return True
+
     def get_history(self):
         """
         Returns the entire list of recorded sessions.
