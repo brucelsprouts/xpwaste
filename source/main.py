@@ -929,7 +929,10 @@ You can enable skip-to-increment behavior in Timer Settings.</em></p>
         date_str = start_dt.strftime("%Y-%m-%d")
         start_str = start_dt.strftime("%H:%M")
         end_str = end_dt.strftime("%H:%M")
-        duration_minutes = max(1, int(duration_seconds // 60))
+        # Track only full minutes studied (rounded down).
+        duration_minutes = int(duration_seconds // 60)
+        if duration_minutes <= 0:
+            return
 
         session_data = {
             "date": date_str,

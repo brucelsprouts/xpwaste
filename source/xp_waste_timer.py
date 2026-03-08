@@ -69,14 +69,17 @@ class XPWasteTimer(QObject):
         end_time = datetime.now()
 
         if self._current_session_type == "Focus":
-            # Emit focus session completed signal only when a session finishes naturally
-            if completed_naturally and self._start_time:
+            # Record elapsed focus time when a focus session ends naturally or is skipped.
+            # Minutes are rounded down later in the UI layer; skip events only count if
+            # at least one full minute has elapsed.
+            if self._start_time:
                 duration = (end_time - self._start_time).total_seconds()
-                self.focus_session_completed.emit(
-                    self._start_time.isoformat(),
-                    end_time.isoformat(),
-                    int(duration)
-                )
+                if completed_naturally or duration >= 60:
+                    self.focus_session_completed.emit(
+                        self._start_time.isoformat(),
+                        end_time.isoformat(),
+                        int(duration)
+                    )
 
             # Update focus session counter only on natural completion
             if completed_naturally:
