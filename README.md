@@ -73,4 +73,9 @@ Or direct command:
 ## Notes
 
 - Runtime files in `data/` are user-specific and should not be committed.
-- This project is not affiliated with Jagex Ltd.
+- Sound effects are not bundled with this project due to copyright/licensing reasons.
+- If you want Old School RuneScape-style jingles, download them yourself from:
+	`https://oldschool.runescape.wiki/w/Jingles`
+- XP Waste is a fan-made personal project built for fun.
+- This project is not affiliated with, endorsed by, sponsored by, or connected to Jagex Ltd.
+- RuneScape and Old School RuneScape are trademarks of Jagex Ltd.
