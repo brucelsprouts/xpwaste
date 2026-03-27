@@ -1101,13 +1101,17 @@ class XPWasteWindow(QMainWindow):
         self.circular_progress.set_track_color(track)
 
     def _set_theme(self, theme: str):
-        """Updates the current theme and reapplies styles."""
+        """Updates the current theme and reapplies styles without touching timer state."""
         if theme not in ("runescape", "dark"):
             return
         self._theme = theme
         self._apply_theme()
         self._refresh_history_list()
         self._update_today_card()
+        # Resync display widgets — theme change must never affect timer state
+        self._update_circular_progress_value()
+        self._update_start_pause_button()
+        self.time_label.setText(self._format_time(self.timer.time_remaining))
 
     def _play_notification_sound(self):
         """Plays the configured notification sound."""
@@ -1267,6 +1271,9 @@ history rows to remove specific entries.</em></p>
             self._set_theme(selected_theme)
             self._save_settings()  # Save settings to file
             self._update_cycle_label()
+            # Always resync display after any settings change
+            self._update_start_pause_button()
+            self._update_circular_progress_value()
 
     # ------------------------------------------------------------------ #
     # Timer signal handlers
