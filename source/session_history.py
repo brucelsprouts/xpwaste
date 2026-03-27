@@ -132,6 +132,14 @@ class SessionHistoryManager:
             if session.get('date') == today
         )
 
+    def get_focus_session_count_today(self):
+        """Returns the number of focus sessions recorded today."""
+        today = datetime.now().strftime('%Y-%m-%d')
+        return sum(
+            1 for session in self.history
+            if session.get('date') == today and session.get('session_type') == 'Focus'
+        )
+
     def get_total_study_seconds_overall(self):
         """Returns total active study seconds across all sessions."""
         return sum(self._session_active_seconds(session) for session in self.history)
