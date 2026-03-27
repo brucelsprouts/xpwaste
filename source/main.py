@@ -1252,12 +1252,7 @@ history rows to remove specific entries.</em></p>
         )
         if dialog.exec_() == QDialog.Accepted:
             focus, short_break, long_break, cycle_length, sound_setting, sound_file, skip_behavior, min_log_seconds, selected_theme = dialog.get_values()
-            durations_changed = (
-                focus != self.timer.FOCUS_TIME or
-                short_break != self.timer.SHORT_BREAK_TIME or
-                long_break != self.timer.LONG_BREAK_TIME
-            )
-            self.timer.set_durations(focus, short_break, long_break, reset_current=durations_changed)
+            self.timer.set_durations(focus, short_break, long_break, reset_current=True)
             self.timer.set_cycle_length(cycle_length)
             self.timer.set_minimum_log_seconds(min_log_seconds)
             self._notification_sound = sound_setting
