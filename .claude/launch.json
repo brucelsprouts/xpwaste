@@ -1,0 +1,23 @@
+{
+  "version": "0.0.1",
+  "configurations": [
+    {
+      "name": "XPWaste (Dev)",
+      "runtimeExecutable": "python",
+      "runtimeArgs": ["source/main.py"],
+      "port": 0
+    },
+    {
+      "name": "Install Dependencies",
+      "runtimeExecutable": "pip",
+      "runtimeArgs": ["install", "-r", "build-tools/requirements.txt"],
+      "port": 0
+    },
+    {
+      "name": "Build Executable",
+      "runtimeExecutable": "python",
+      "runtimeArgs": ["-m", "PyInstaller", "--onefile", "--windowed", "--distpath", "../dist", "--workpath", "../build", "--add-data", "../data;data", "--add-data", "../assets;assets", "--icon", "../assets/xpwaste.ico", "--name", "XPWaste", "--clean", "../source/main.py"],
+      "port": 0
+    }
+  ]
+}
