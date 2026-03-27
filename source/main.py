@@ -3,8 +3,8 @@ import json
 import os
 from datetime import datetime
 
-from PyQt5.QtCore import Qt, QUrl
-from PyQt5.QtGui import QPainter, QColor, QBrush, QPen, QIcon
+from PyQt5.QtCore import Qt, QUrl, QTimer
+from PyQt5.QtGui import QPainter, QColor, QBrush, QPen, QIcon, QFont, QLinearGradient
 from PyQt5.QtMultimedia import QMediaPlayer, QMediaContent
 from PyQt5.QtWidgets import (
     QApplication,
@@ -28,6 +28,9 @@ from PyQt5.QtWidgets import (
     QFileDialog,
     QListView,
     QMenu,
+    QProgressBar,
+    QSizePolicy,
+    QGraphicsDropShadowEffect,
 )
 
 from xp_waste_timer import XPWasteTimer
@@ -51,6 +54,62 @@ def _app_root_path():
     return os.path.abspath(os.path.join(os.path.dirname(__file__), ".."))
 
 
+# ---------------------------------------------------------------------------
+# Custom circular progress widget for the timer
+# ---------------------------------------------------------------------------
+class CircularProgress(QWidget):
+    """A circular arc that shows timer progress."""
+
+    def __init__(self, parent=None):
+        super().__init__(parent)
+        self._progress = 1.0  # 0.0 to 1.0
+        self._arc_color = QColor("#e6a519")
+        self._track_color = QColor(255, 255, 255, 20)
+        self._arc_width = 6
+        self.setMinimumSize(200, 200)
+        self.setMaximumSize(200, 200)
+
+    def set_progress(self, value):
+        self._progress = max(0.0, min(1.0, value))
+        self.update()
+
+    def set_arc_color(self, color):
+        self._arc_color = QColor(color)
+        self.update()
+
+    def set_track_color(self, color):
+        self._track_color = QColor(color)
+        self.update()
+
+    def paintEvent(self, event):
+        painter = QPainter(self)
+        painter.setRenderHint(QPainter.Antialiasing)
+
+        size = min(self.width(), self.height())
+        margin = self._arc_width + 2
+        rect = self.rect().adjusted(margin, margin, -margin, -margin)
+
+        # Track (background circle)
+        pen = QPen(self._track_color, self._arc_width)
+        pen.setCapStyle(Qt.RoundCap)
+        painter.setPen(pen)
+        painter.drawEllipse(rect)
+
+        # Progress arc
+        if self._progress > 0.001:
+            pen = QPen(self._arc_color, self._arc_width)
+            pen.setCapStyle(Qt.RoundCap)
+            painter.setPen(pen)
+            start_angle = 90 * 16  # 12 o'clock position
+            span_angle = int(-self._progress * 360 * 16)
+            painter.drawArc(rect, start_angle, span_angle)
+
+        painter.end()
+
+
+# ---------------------------------------------------------------------------
+# Main Window
+# ---------------------------------------------------------------------------
 class XPWasteWindow(QMainWindow):
     """
     Main application window that connects the XPWaste logic to the UI.
@@ -75,24 +134,31 @@ class XPWasteWindow(QMainWindow):
         self.history_manager = SessionHistoryManager(history_file=history_file)
         self._last_session_type = self.timer.current_session_type
         self._theme = "runescape"  # Default to RuneScape theme
-        
+
         # Settings file path
         self._settings_file = os.path.join(self._data_dir, "settings.json")
-        
+
         # Notification settings (load from file)
         self._load_settings()
         self._media_player = QMediaPlayer()
+
+        # Live "today" refresh timer — updates the today card every 30s
+        self._today_refresh_timer = QTimer(self)
+        self._today_refresh_timer.setInterval(30000)
+        self._today_refresh_timer.timeout.connect(self._update_today_card)
 
         # Build UI and connect logic
         self._build_ui()
         self._connect_signals()
         self._load_existing_history()
         self._update_total_time_label()
-        
+        self._update_today_card()
+        self._today_refresh_timer.start()
+
     def _load_settings(self):
         """Load settings from file."""
         # Default settings
-        self._notification_sound = "system" 
+        self._notification_sound = "system"
         self._custom_sound_file = None
         self._skip_increments_cycle = False
         self._minimum_log_seconds = 60
@@ -101,7 +167,7 @@ class XPWasteWindow(QMainWindow):
         short_break_time = self.timer.SHORT_BREAK_TIME
         long_break_time = self.timer.LONG_BREAK_TIME
         cycle_length = self.timer.FOCUS_SESSIONS_BEFORE_LONG_BREAK
-        
+
         try:
             if os.path.exists(self._settings_file):
                 with open(self._settings_file, 'r') as f:
@@ -125,7 +191,7 @@ class XPWasteWindow(QMainWindow):
             self.timer.set_minimum_log_seconds(self._minimum_log_seconds)
         except Exception as e:
             print(f"Failed to load settings: {e}")
-            
+
     def _save_settings(self):
         """Save settings to file."""
         try:
@@ -151,6 +217,8 @@ class XPWasteWindow(QMainWindow):
         central_widget = QWidget()
         central_widget.setObjectName("RootWidget")
         main_layout = QVBoxLayout()
+        main_layout.setSpacing(12)
+        main_layout.setContentsMargins(16, 8, 16, 16)
         central_widget.setLayout(main_layout)
         self.setCentralWidget(central_widget)
 
@@ -169,48 +237,77 @@ class XPWasteWindow(QMainWindow):
         title_label.setAlignment(Qt.AlignCenter)
         main_layout.addWidget(title_label)
 
-        # Manual session selection (moved to top)
-        session_controls_layout = QHBoxLayout()
+        # ── Session type tab buttons ──
+        session_tab_layout = QHBoxLayout()
+        session_tab_layout.setSpacing(0)
         self.focus_session_button = QPushButton("Focus")
+        self.focus_session_button.setObjectName("SessionTab")
+        self.focus_session_button.setProperty("active", True)
         self.short_break_button = QPushButton("Short Break")
+        self.short_break_button.setObjectName("SessionTab")
         self.long_break_button = QPushButton("Long Break")
-        session_controls_layout.addWidget(self.focus_session_button)
-        session_controls_layout.addWidget(self.short_break_button)
-        session_controls_layout.addWidget(self.long_break_button)
-        main_layout.addLayout(session_controls_layout)
+        self.long_break_button.setObjectName("SessionTab")
+        session_tab_layout.addWidget(self.focus_session_button)
+        session_tab_layout.addWidget(self.short_break_button)
+        session_tab_layout.addWidget(self.long_break_button)
+        main_layout.addLayout(session_tab_layout)
 
-        # Session / timer box
+        # ── Session / timer card ──
         self.session_box = QFrame()
         self.session_box.setObjectName("SessionBox")
         session_box_layout = QVBoxLayout()
+        session_box_layout.setSpacing(2)
+        session_box_layout.setContentsMargins(16, 16, 16, 16)
         self.session_box.setLayout(session_box_layout)
 
-        # Session type label (moved inside color box)
-        self.session_label = QLabel(f"{self.timer.current_session_type} Session")
+        # Session type label
+        self.session_label = QLabel(f"{self.timer.current_session_type}")
         self.session_label.setObjectName("SessionLabel")
         self.session_label.setAlignment(Qt.AlignCenter)
         session_box_layout.addWidget(self.session_label)
 
-        # Countdown label
+        # Circular progress + time display (stacked)
+        timer_container = QWidget()
+        timer_container.setObjectName("TimerContainer")
+        timer_container_layout = QVBoxLayout()
+        timer_container_layout.setContentsMargins(0, 0, 0, 0)
+        timer_container_layout.setAlignment(Qt.AlignCenter)
+        timer_container.setLayout(timer_container_layout)
+
+        # Circular progress ring with time label overlaid
+        self.circular_progress = CircularProgress()
+        self.circular_progress.setFixedSize(180, 180)
+
+        # Time label overlaid on the circle
         self.time_label = QLabel(self._format_time(self.timer.time_remaining))
         self.time_label.setObjectName("TimeLabel")
         self.time_label.setAlignment(Qt.AlignCenter)
-        session_box_layout.addWidget(self.time_label)
+
+        # Use a stacked layout approach via absolute positioning
+        ring_wrapper = QWidget()
+        ring_wrapper.setObjectName("RingWrapper")
+        ring_wrapper.setFixedSize(180, 180)
+        self.circular_progress.setParent(ring_wrapper)
+        self.circular_progress.move(0, 0)
+        self.time_label.setParent(ring_wrapper)
+        self.time_label.setFixedSize(180, 180)
+        self.time_label.move(0, 0)
+
+        timer_container_layout.addWidget(ring_wrapper, alignment=Qt.AlignCenter)
+        session_box_layout.addWidget(timer_container, alignment=Qt.AlignCenter)
 
         # Cycle info label with inline controls
         cycle_layout = QHBoxLayout()
         cycle_layout.setAlignment(Qt.AlignCenter)
-        self.cycle_minus_button = QPushButton("−")
-        self.cycle_minus_button.setFlat(True)
-        self.cycle_minus_button.setFixedSize(20, 20)
-        self.cycle_minus_button.setStyleSheet("QPushButton { border: none; background: transparent; font-size: 16px; padding: 0; }")
+        self.cycle_minus_button = QPushButton("-")
+        self.cycle_minus_button.setObjectName("CycleButton")
+        self.cycle_minus_button.setFixedSize(24, 24)
         self.cycle_label = QLabel("")
         self.cycle_label.setObjectName("CycleLabel")
         self.cycle_label.setAlignment(Qt.AlignCenter)
         self.cycle_plus_button = QPushButton("+")
-        self.cycle_plus_button.setFlat(True)
-        self.cycle_plus_button.setFixedSize(20, 20)
-        self.cycle_plus_button.setStyleSheet("QPushButton { border: none; background: transparent; font-size: 16px; padding: 0; }")
+        self.cycle_plus_button.setObjectName("CycleButton")
+        self.cycle_plus_button.setFixedSize(24, 24)
         cycle_layout.addWidget(self.cycle_minus_button)
         cycle_layout.addWidget(self.cycle_label)
         cycle_layout.addWidget(self.cycle_plus_button)
@@ -218,20 +315,101 @@ class XPWasteWindow(QMainWindow):
 
         main_layout.addWidget(self.session_box)
 
-        # Control buttons
+        # ── Control buttons ──
         controls_layout = QHBoxLayout()
+        controls_layout.setSpacing(8)
         self.start_pause_button = QPushButton("Start")
+        self.start_pause_button.setObjectName("PrimaryButton")
         self.skip_button = QPushButton("Skip")
+        self.skip_button.setObjectName("SecondaryButton")
         self.reset_button = QPushButton("Reset")
+        self.reset_button.setObjectName("SecondaryButton")
         controls_layout.addWidget(self.start_pause_button)
         controls_layout.addWidget(self.skip_button)
         controls_layout.addWidget(self.reset_button)
         main_layout.addLayout(controls_layout)
 
-        # History list
+        # ── Today's Progress card ──
+        self.today_card = QFrame()
+        self.today_card.setObjectName("TodayCard")
+        today_layout = QVBoxLayout()
+        today_layout.setSpacing(8)
+        today_layout.setContentsMargins(14, 12, 14, 12)
+        self.today_card.setLayout(today_layout)
+
+        today_header = QLabel("Today's Progress")
+        today_header.setObjectName("TodayHeader")
+        today_layout.addWidget(today_header)
+
+        # Stats row: time studied | sessions
+        stats_row = QHBoxLayout()
+        stats_row.setSpacing(16)
+
+        # Time studied today
+        time_stat = QVBoxLayout()
+        time_stat.setSpacing(2)
+        self.today_time_value = QLabel("0m 0s")
+        self.today_time_value.setObjectName("TodayStatValue")
+        time_stat_label = QLabel("Time Studied")
+        time_stat_label.setObjectName("TodayStatLabel")
+        time_stat.addWidget(self.today_time_value)
+        time_stat.addWidget(time_stat_label)
+        stats_row.addLayout(time_stat)
+
+        # Separator line
+        sep = QFrame()
+        sep.setObjectName("StatSeparator")
+        sep.setFrameShape(QFrame.VLine)
+        sep.setFixedWidth(1)
+        stats_row.addWidget(sep)
+
+        # Sessions count today
+        session_stat = QVBoxLayout()
+        session_stat.setSpacing(2)
+        self.today_sessions_value = QLabel("0")
+        self.today_sessions_value.setObjectName("TodayStatValue")
+        session_stat_label = QLabel("Sessions")
+        session_stat_label.setObjectName("TodayStatLabel")
+        session_stat.addWidget(self.today_sessions_value)
+        session_stat.addWidget(session_stat_label)
+        stats_row.addLayout(session_stat)
+
+        # Separator
+        sep2 = QFrame()
+        sep2.setObjectName("StatSeparator")
+        sep2.setFrameShape(QFrame.VLine)
+        sep2.setFixedWidth(1)
+        stats_row.addWidget(sep2)
+
+        # Total all-time
+        total_stat = QVBoxLayout()
+        total_stat.setSpacing(2)
+        self.today_total_value = QLabel("0m 0s")
+        self.today_total_value.setObjectName("TodayStatValue")
+        total_stat_label = QLabel("All Time")
+        total_stat_label.setObjectName("TodayStatLabel")
+        total_stat.addWidget(self.today_total_value)
+        total_stat.addWidget(total_stat_label)
+        stats_row.addLayout(total_stat)
+
+        today_layout.addLayout(stats_row)
+
+        # Daily progress bar (visual only — shows fraction of 2h goal)
+        self.daily_progress = QProgressBar()
+        self.daily_progress.setObjectName("DailyProgress")
+        self.daily_progress.setRange(0, 100)
+        self.daily_progress.setValue(0)
+        self.daily_progress.setTextVisible(False)
+        self.daily_progress.setFixedHeight(6)
+        today_layout.addWidget(self.daily_progress)
+
+        main_layout.addWidget(self.today_card)
+
+        # ── History section ──
         history_group = QGroupBox("History")
         history_group.setObjectName("HistoryGroup")
         history_layout = QVBoxLayout()
+        history_layout.setSpacing(4)
         history_group.setLayout(history_layout)
 
         self.overall_time_label = QLabel("")
@@ -246,7 +424,7 @@ class XPWasteWindow(QMainWindow):
 
         main_layout.addWidget(history_group)
 
-        # Apply RuneScape theme styling
+        # Apply theme styling
         self._apply_theme()
         # Initialize derived labels
         self._update_cycle_label()
@@ -275,497 +453,652 @@ class XPWasteWindow(QMainWindow):
         """Loads previously saved sessions into the history list."""
         self._refresh_history_list()
 
+    # ------------------------------------------------------------------ #
+    # Theming
+    # ------------------------------------------------------------------ #
     def _apply_theme(self):
         """Applies the current theme (runescape or normal) to the whole window."""
         if self._theme == "runescape":
-            # Dark-base RuneScape palette (subtle accents)
-            style = """
-            QWidget {
-                color: #e6dcc8;
-                font-family: Segoe UI, sans-serif;
-                background-color: #121212;
-            }
-            QDialog {
-                background-color: #121212;
-            }
-            QMenuBar {
-                background-color: #121212;
-                color: #e6dcc8;
-                border: none;
-            }
-            QMenuBar::item:selected {
-                background-color: #1f1f1f;
-            }
-            QMenu {
-                background-color: #161616;
-                color: #e6dcc8;
-                border: 1px solid #3a3125;
-            }
-            QMenu::item:selected {
-                background-color: #3b2f1f;
-                color: #ffcf3f;
-            }
-            #SessionBox {
-                border-radius: 8px;
-                padding: 8px;
-                border: 1px solid #3a3125;
-            }
-            #SessionBox[sessionType="focus"] {
-                background-color: #1d1a16;
-                border-color: #694d23;
-            }
-            #SessionBox[sessionType="short_break"] {
-                background-color: #1a2b23;
-                border-color: #3f6b52;
-            }
-            #SessionBox[sessionType="long_break"] {
-                background-color: #1b2633;
-                border-color: #3f6487;
-            }
-            #TitleLabel {
-                font-size: 24px;
-                margin: 12px 0;
-                color: #e6a519;
-            }
-            #SessionLabel {
-                font-size: 18px;
-                margin: 8px 0;
-                color: #d8c7a4;
-            }
-            #CycleLabel {
-                font-size: 13px;
-                margin: 4px 0;
-                color: #bfa67a;
-            }
-            #TimeLabel {
-                font-size: 40px;
-                margin: 16px 0;
-                color: #ffcf3f;
-            }
-            #SessionLabel, #TimeLabel, #CycleLabel {
-                background-color: transparent;
-            }
-            #TotalTimeLabel {
-                font-size: 14px;
-                margin: 4px 0;
-                color: #cdbb97;
-            }
-            #HistoryOverallLabel {
-                font-size: 12px;
-                margin: 2px 2px 4px 2px;
-                color: #9d8c6f;
-            }
-            QPushButton {
-                background-color: #2b251b;
-                color: #dfd2b8;
-                border: 1px solid #4a3a24;
-                border-radius: 4px;
-                padding: 6px 14px;
-                font-size: 14px;
-            }
-            QPushButton:hover {
-                background-color: #342d21;
-                border-color: #694d23;
-            }
-            QPushButton:pressed {
-                background-color: #1f1b14;
-                color: #e6a519;
-            }
-            QGroupBox {
-                border: 1px solid #3a3125;
-                border-radius: 4px;
-                margin-top: 10px;
-                color: #cfbe9b;
-            }
-            QGroupBox::title {
-                subcontrol-origin: margin;
-                left: 10px;
-                padding: 0 4px;
-            }
-            QListWidget {
-                background-color: #181818;
-                border: 1px solid #3a3125;
-                color: #d8ccb2;
-                outline: 0;
-            }
-            QListWidget::item:selected {
-                background-color: #2b2218;
-                color: #e6a519;
-            }
-            QListWidget::item:focus {
-                outline: none;
-            }
-            QSpinBox {
-                background-color: #1a1a1a;
-                color: #d8ccb2;
-                border: 1px solid #3a3125;
-                border-radius: 4px;
-                padding: 4px 8px;
-                min-height: 20px;
-            }
-            QSpinBox::up-button,
-            QSpinBox::down-button {
-                width: 0px;
-                border: none;
-            }
-            QSpinBox::up-arrow,
-            QSpinBox::down-arrow {
-                image: none;
-                width: 0px;
-                height: 0px;
-            }
-            QComboBox {
-                background-color: #1a1a1a;
-                color: #d8ccb2;
-                border: 1px solid #3a3125;
-                border-radius: 4px;
-                padding: 4px 8px;
-                min-height: 20px;
-            }
-            QComboBox:hover {
-                border-color: #694d23;
-            }
-            QComboBox::drop-down {
-                subcontrol-origin: padding;
-                subcontrol-position: top right;
-                width: 20px;
-                border-left: 1px solid #3a3125;
-                background-color: #2b251b;
-            }
-            QComboBox::down-arrow {
-                image: none;
-                width: 0px;
-                height: 0px;
-            }
-            QComboBox QAbstractItemView {
-                background-color: #161616;
-                color: #d8ccb2;
-                border: 1px solid #3a3125;
-                selection-background-color: #2b2218;
-                selection-color: #e6a519;
-            }
-            QCheckBox {
-                color: #d8ccb2;
-                spacing: 8px;
-            }
-            QCheckBox::indicator {
-                width: 14px;
-                height: 14px;
-                border: 1px solid #3a3125;
-                border-radius: 2px;
-                background-color: #1a1a1a;
-            }
-            QCheckBox::indicator:checked {
-                background-color: #694d23;
-                border-color: #8a6a3a;
-            }
-            QCheckBox::indicator:hover {
-                border-color: #694d23;
-            }
-            QScrollBar:vertical {
-                background-color: transparent;
-                width: 8px;
-                border: none;
-                margin: 0;
-            }
-            QScrollBar::handle:vertical {
-                background-color: #4a3a24;
-                border-radius: 4px;
-                min-height: 20px;
-                margin: 0;
-            }
-            QScrollBar::handle:vertical:hover {
-                background-color: #5b472c;
-            }
-            QScrollBar:horizontal {
-                background-color: transparent;
-                height: 8px;
-                border: none;
-                margin: 0;
-            }
-            QScrollBar::handle:horizontal {
-                background-color: #4a3a24;
-                border-radius: 4px;
-                min-width: 20px;
-                margin: 0;
-            }
-            QScrollBar::handle:horizontal:hover {
-                background-color: #5b472c;
-            }
-            QScrollBar::add-line:vertical,
-            QScrollBar::sub-line:vertical,
-            QScrollBar::add-line:horizontal,
-            QScrollBar::sub-line:horizontal {
-                width: 0px;
-                height: 0px;
-            }
-            QScrollBar::add-page:vertical,
-            QScrollBar::sub-page:vertical,
-            QScrollBar::add-page:horizontal,
-            QScrollBar::sub-page:horizontal {
-                background: transparent;
-            }
-            """
+            style = self._osrs_stylesheet()
         else:
-            style = """
-            QWidget {
-                color: #f0f0f0;
-                font-family: Segoe UI, sans-serif;
-                background-color: #121212;
-            }
-            QDialog {
-                background-color: #121212;
-            }
-            QMenuBar {
-                background-color: #121212;
-                color: #f0f0f0;
-                border: none;
-            }
-            QMenuBar::item:selected {
-                background-color: #1e1e1e;
-            }
-            QMenu {
-                background-color: #121212;
-                color: #f0f0f0;
-                border: 1px solid #333333;
-            }
-            QMenu::item:selected {
-                background-color: #1e88e5;
-            }
-            #SessionBox {
-                border-radius: 8px;
-                padding: 8px;
-                border: 1px solid #333333;
-            }
-            #SessionBox[sessionType="focus"] {
-                background-color: #1e1e1e;
-            }
-            #SessionBox[sessionType="short_break"] {
-                background-color: #102a43;
-            }
-            #SessionBox[sessionType="long_break"] {
-                background-color: #133321;
-            }
-            #TitleLabel {
-                font-size: 24px;
-                margin: 12px 0;
-            }
-            #SessionLabel {
-                font-size: 18px;
-                margin: 8px 0;
-            }
-            #CycleLabel {
-                font-size: 13px;
-                margin: 4px 0;
-            }
-            #TimeLabel {
-                font-size: 40px;
-                margin: 16px 0;
-            }
-            #SessionLabel, #TimeLabel, #CycleLabel {
-                background-color: transparent;
-            }
-            #TotalTimeLabel {
-                font-size: 14px;
-                margin: 4px 0;
-            }
-            #HistoryOverallLabel {
-                font-size: 12px;
-                margin: 2px 2px 4px 2px;
-                color: #a8a8a8;
-            }
-            QPushButton {
-                background-color: #2d2d2d;
-                color: #f0f0f0;
-                border: 1px solid #444444;
-                border-radius: 4px;
-                padding: 6px 14px;
-                font-size: 14px;
-            }
-            QPushButton:hover {
-                background-color: #3a3a3a;
-            }
-            QPushButton:pressed {
-                background-color: #222222;
-            }
-            QGroupBox {
-                border: 1px solid #333333;
-                border-radius: 4px;
-                margin-top: 10px;
-            }
-            QGroupBox::title {
-                subcontrol-origin: margin;
-                left: 10px;
-                padding: 0 4px;
-            }
-            QListWidget {
-                background-color: #1e1e1e;
-                border: 1px solid #333333;
-                outline: 0;
-            }
-            QListWidget::item:selected {
-                background-color: #3a3a3a;
-                color: #ffffff;
-            }
-            QListWidget::item:focus {
-                outline: none;
-            }
-            QSpinBox {
-                background-color: #1e1e1e;
-                color: #f0f0f0;
-                border: 1px solid #333333;
-                border-radius: 4px;
-                padding: 4px 8px;
-                min-height: 20px;
-            }
-            QSpinBox::up-button {
-                subcontrol-origin: border;
-                subcontrol-position: top right;
-                width: 18px;
-                border-left: 1px solid #333333;
-                border-bottom: 1px solid #333333;
-                border-top-right-radius: 4px;
-                background-color: #2d2d2d;
-            }
-            QSpinBox::up-button:hover {
-                background-color: #3a3a3a;
-            }
-            QSpinBox::up-button:pressed {
-                background-color: #222222;
-            }
-            QSpinBox::down-button {
-                subcontrol-origin: border;
-                subcontrol-position: bottom right;
-                width: 18px;
-                border-left: 1px solid #333333;
-                border-top: 1px solid #333333;
-                border-bottom-right-radius: 4px;
-                background-color: #2d2d2d;
-            }
-            QSpinBox::down-button:hover {
-                background-color: #3a3a3a;
-            }
-            QSpinBox::down-button:pressed {
-                background-color: #222222;
-            }
-            QSpinBox::up-button,
-            QSpinBox::down-button {
-                width: 0px;
-                border: none;
-            }
-            QSpinBox::up-arrow,
-            QSpinBox::down-arrow {
-                image: none;
-                width: 0px;
-                height: 0px;
-            }
-            QComboBox {
-                background-color: #1e1e1e;
-                color: #f0f0f0;
-                border: 1px solid #333333;
-                border-radius: 4px;
-                padding: 4px 8px;
-                min-height: 20px;
-            }
-            QComboBox:hover {
-                border-color: #555555;
-            }
-            QComboBox::drop-down {
-                subcontrol-origin: padding;
-                subcontrol-position: top right;
-                width: 20px;
-                border-left: 1px solid #333333;
-                background-color: #2d2d2d;
-            }
-            QComboBox::down-arrow {
-                image: none;
-                width: 0px;
-                height: 0px;
-            }
-            QComboBox QAbstractItemView {
-                background-color: #1e1e1e;
-                color: #f0f0f0;
-                border: 1px solid #333333;
-                selection-background-color: #3a3a3a;
-                selection-color: #ffffff;
-            }
-            QCheckBox {
-                color: #f0f0f0;
-                spacing: 8px;
-            }
-            QCheckBox::indicator {
-                width: 14px;
-                height: 14px;
-                border: 1px solid #444444;
-                border-radius: 2px;
-                background-color: #1e1e1e;
-            }
-            QCheckBox::indicator:checked {
-                background-color: #4a7a4a;
-                border-color: #6aa06a;
-            }
-            QCheckBox::indicator:hover {
-                border-color: #666666;
-            }
-            QScrollBar:vertical {
-                background-color: transparent;
-                width: 8px;
-                border: none;
-                margin: 0;
-            }
-            QScrollBar::handle:vertical {
-                background-color: #505050;
-                border-radius: 4px;
-                min-height: 20px;
-                margin: 0;
-            }
-            QScrollBar::handle:vertical:hover {
-                background-color: #606060;
-            }
-            QScrollBar::handle:vertical:pressed {
-                background-color: #404040;
-            }
-            QScrollBar::add-line:vertical,
-            QScrollBar::sub-line:vertical {
-                height: 0px;
-                width: 0px;
-            }
-            QScrollBar::add-page:vertical,
-            QScrollBar::sub-page:vertical {
-                background: transparent;
-            }
-            QScrollBar:horizontal {
-                background-color: transparent;
-                height: 8px;
-                border: none;
-                margin: 0;
-            }
-            QScrollBar::handle:horizontal {
-                background-color: #505050;
-                border-radius: 4px;
-                min-width: 20px;
-                margin: 0;
-            }
-            QScrollBar::handle:horizontal:hover {
-                background-color: #606060;
-            }
-            QScrollBar::handle:horizontal:pressed {
-                background-color: #404040;
-            }
-            QScrollBar::add-line:horizontal,
-            QScrollBar::sub-line:horizontal {
-                width: 0px;
-                height: 0px;
-            }
-            QScrollBar::add-page:horizontal,
-            QScrollBar::sub-page:horizontal {
-                background: transparent;
-            }
-            """
+            style = self._dark_stylesheet()
 
         self.setStyleSheet(style)
         # Set initial session background state
         self._update_session_background(self.timer.current_session_type)
+        self._update_session_tab_highlight()
+        self._update_circular_progress_colors()
+
+    def _osrs_stylesheet(self):
+        return """
+        /* ── Base ── */
+        QWidget {
+            color: #d8ccb2;
+            font-family: "Segoe UI", sans-serif;
+            background-color: #0e0e0e;
+        }
+        QDialog { background-color: #0e0e0e; }
+
+        /* ── Menu ── */
+        QMenuBar {
+            background-color: #0e0e0e;
+            color: #bfa67a;
+            border: none;
+            font-size: 12px;
+        }
+        QMenuBar::item:selected { background-color: #1a1714; }
+        QMenu {
+            background-color: #141210;
+            color: #d8ccb2;
+            border: 1px solid #2e2618;
+        }
+        QMenu::item:selected {
+            background-color: #2b2218;
+            color: #ffcf3f;
+        }
+
+        /* ── Title ── */
+        #TitleLabel {
+            font-size: 26px;
+            font-weight: 700;
+            letter-spacing: 2px;
+            color: #e6a519;
+            margin: 6px 0 2px 0;
+            background: transparent;
+        }
+
+        /* ── Session tab buttons ── */
+        #SessionTab {
+            background-color: #1a1714;
+            color: #8c7d65;
+            border: 1px solid #2e2618;
+            padding: 7px 0;
+            font-size: 13px;
+            font-weight: 600;
+        }
+        #SessionTab:hover {
+            background-color: #211d16;
+            color: #bfa67a;
+        }
+        #SessionTab[active="true"] {
+            background-color: #2b2218;
+            color: #e6a519;
+            border-bottom: 2px solid #e6a519;
+        }
+
+        /* ── Session box (timer card) ── */
+        #SessionBox {
+            border-radius: 10px;
+            padding: 8px;
+            border: 1px solid #2e2618;
+        }
+        #SessionBox[sessionType="focus"] {
+            background-color: #161310;
+            border-color: #4a3820;
+        }
+        #SessionBox[sessionType="short_break"] {
+            background-color: #121a16;
+            border-color: #2a4d36;
+        }
+        #SessionBox[sessionType="long_break"] {
+            background-color: #121620;
+            border-color: #2a3d5a;
+        }
+
+        /* ── Timer labels ── */
+        #SessionLabel {
+            font-size: 15px;
+            font-weight: 600;
+            margin: 4px 0;
+            color: #bfa67a;
+            background: transparent;
+        }
+        #TimeLabel {
+            font-size: 42px;
+            font-weight: 700;
+            color: #ffcf3f;
+            background: transparent;
+        }
+        #RingWrapper, #TimerContainer { background: transparent; }
+        #CycleLabel {
+            font-size: 12px;
+            margin: 2px 0;
+            color: #8c7d65;
+            background: transparent;
+        }
+
+        /* ── Cycle +/- buttons ── */
+        #CycleButton {
+            border: 1px solid #2e2618;
+            border-radius: 12px;
+            background-color: #1a1714;
+            color: #8c7d65;
+            font-size: 14px;
+            font-weight: 700;
+            padding: 0;
+        }
+        #CycleButton:hover { background-color: #2b2218; color: #e6a519; }
+
+        /* ── Control buttons ── */
+        #PrimaryButton {
+            background-color: #3d2e0f;
+            color: #ffcf3f;
+            border: 1px solid #5c4316;
+            border-radius: 6px;
+            padding: 8px 18px;
+            font-size: 14px;
+            font-weight: 700;
+        }
+        #PrimaryButton:hover { background-color: #4d3a14; border-color: #7a5a1e; }
+        #PrimaryButton:pressed { background-color: #2e2208; }
+
+        #SecondaryButton {
+            background-color: #1a1714;
+            color: #bfa67a;
+            border: 1px solid #2e2618;
+            border-radius: 6px;
+            padding: 8px 18px;
+            font-size: 14px;
+            font-weight: 600;
+        }
+        #SecondaryButton:hover { background-color: #211d16; border-color: #4a3820; }
+        #SecondaryButton:pressed { background-color: #0e0c0a; }
+
+        /* ── Today's Progress card ── */
+        #TodayCard {
+            background-color: #141210;
+            border: 1px solid #2e2618;
+            border-radius: 8px;
+        }
+        #TodayHeader {
+            font-size: 13px;
+            font-weight: 700;
+            color: #bfa67a;
+            background: transparent;
+            margin-bottom: 2px;
+        }
+        #TodayStatValue {
+            font-size: 20px;
+            font-weight: 700;
+            color: #e6a519;
+            background: transparent;
+        }
+        #TodayStatLabel {
+            font-size: 11px;
+            color: #6d6050;
+            background: transparent;
+        }
+        #StatSeparator {
+            background-color: #2e2618;
+            max-height: 32px;
+        }
+
+        /* ── Daily progress bar ── */
+        #DailyProgress {
+            background-color: #1a1714;
+            border: none;
+            border-radius: 3px;
+        }
+        #DailyProgress::chunk {
+            background-color: #b8860b;
+            border-radius: 3px;
+        }
+
+        /* ── History ── */
+        #HistoryGroup {
+            border: 1px solid #2e2618;
+            border-radius: 6px;
+            margin-top: 8px;
+            color: #bfa67a;
+            font-weight: 600;
+        }
+        QGroupBox::title {
+            subcontrol-origin: margin;
+            left: 10px;
+            padding: 0 4px;
+        }
+        #HistoryOverallLabel {
+            font-size: 12px;
+            margin: 2px 2px 4px 2px;
+            color: #6d6050;
+        }
+        QListWidget {
+            background-color: #111111;
+            border: 1px solid #2e2618;
+            border-radius: 4px;
+            color: #c0b090;
+            outline: 0;
+            font-size: 12px;
+        }
+        QListWidget::item {
+            padding: 4px 6px;
+            border-bottom: 1px solid #1a1714;
+        }
+        QListWidget::item:selected {
+            background-color: #2b2218;
+            color: #e6a519;
+        }
+        QListWidget::item:focus { outline: none; }
+
+        /* ── Spin boxes ── */
+        QSpinBox {
+            background-color: #141210;
+            color: #d8ccb2;
+            border: 1px solid #2e2618;
+            border-radius: 4px;
+            padding: 4px 8px;
+            min-height: 20px;
+        }
+        QSpinBox::up-button, QSpinBox::down-button { width: 0px; border: none; }
+        QSpinBox::up-arrow, QSpinBox::down-arrow { image: none; width: 0px; height: 0px; }
+
+        /* ── Combo boxes ── */
+        QComboBox {
+            background-color: #141210;
+            color: #d8ccb2;
+            border: 1px solid #2e2618;
+            border-radius: 4px;
+            padding: 4px 8px;
+            min-height: 20px;
+        }
+        QComboBox:hover { border-color: #4a3820; }
+        QComboBox::drop-down {
+            subcontrol-origin: padding;
+            subcontrol-position: top right;
+            width: 20px;
+            border-left: 1px solid #2e2618;
+            background-color: #1a1714;
+        }
+        QComboBox::down-arrow { image: none; width: 0px; height: 0px; }
+        QComboBox QAbstractItemView {
+            background-color: #141210;
+            color: #d8ccb2;
+            border: 1px solid #2e2618;
+            selection-background-color: #2b2218;
+            selection-color: #e6a519;
+        }
+
+        /* ── Check boxes ── */
+        QCheckBox { color: #d8ccb2; spacing: 8px; }
+        QCheckBox::indicator {
+            width: 14px; height: 14px;
+            border: 1px solid #2e2618;
+            border-radius: 3px;
+            background-color: #141210;
+        }
+        QCheckBox::indicator:checked {
+            background-color: #694d23;
+            border-color: #8a6a3a;
+        }
+        QCheckBox::indicator:hover { border-color: #4a3820; }
+
+        /* ── Scrollbars ── */
+        QScrollBar:vertical {
+            background-color: transparent; width: 7px; border: none; margin: 0;
+        }
+        QScrollBar::handle:vertical {
+            background-color: #3a3020; border-radius: 3px; min-height: 20px;
+        }
+        QScrollBar::handle:vertical:hover { background-color: #4a3a24; }
+        QScrollBar:horizontal {
+            background-color: transparent; height: 7px; border: none; margin: 0;
+        }
+        QScrollBar::handle:horizontal {
+            background-color: #3a3020; border-radius: 3px; min-width: 20px;
+        }
+        QScrollBar::handle:horizontal:hover { background-color: #4a3a24; }
+        QScrollBar::add-line:vertical, QScrollBar::sub-line:vertical,
+        QScrollBar::add-line:horizontal, QScrollBar::sub-line:horizontal {
+            width: 0px; height: 0px;
+        }
+        QScrollBar::add-page:vertical, QScrollBar::sub-page:vertical,
+        QScrollBar::add-page:horizontal, QScrollBar::sub-page:horizontal {
+            background: transparent;
+        }
+
+        /* ── Dialog buttons ── */
+        QPushButton {
+            background-color: #1a1714;
+            color: #bfa67a;
+            border: 1px solid #2e2618;
+            border-radius: 5px;
+            padding: 6px 14px;
+            font-size: 13px;
+        }
+        QPushButton:hover { background-color: #211d16; border-color: #4a3820; }
+        QPushButton:pressed { background-color: #0e0c0a; color: #e6a519; }
+        """
+
+    def _dark_stylesheet(self):
+        return """
+        /* ── Base ── */
+        QWidget {
+            color: #e0e0e0;
+            font-family: "Segoe UI", sans-serif;
+            background-color: #0f0f0f;
+        }
+        QDialog { background-color: #0f0f0f; }
+
+        /* ── Menu ── */
+        QMenuBar {
+            background-color: #0f0f0f;
+            color: #a0a0a0;
+            border: none;
+            font-size: 12px;
+        }
+        QMenuBar::item:selected { background-color: #1a1a1a; }
+        QMenu {
+            background-color: #141414;
+            color: #e0e0e0;
+            border: 1px solid #2a2a2a;
+        }
+        QMenu::item:selected {
+            background-color: #1e3a5f;
+            color: #64b5f6;
+        }
+
+        /* ── Title ── */
+        #TitleLabel {
+            font-size: 26px;
+            font-weight: 700;
+            letter-spacing: 2px;
+            color: #64b5f6;
+            margin: 6px 0 2px 0;
+            background: transparent;
+        }
+
+        /* ── Session tab buttons ── */
+        #SessionTab {
+            background-color: #161616;
+            color: #707070;
+            border: 1px solid #2a2a2a;
+            padding: 7px 0;
+            font-size: 13px;
+            font-weight: 600;
+        }
+        #SessionTab:hover {
+            background-color: #1e1e1e;
+            color: #a0a0a0;
+        }
+        #SessionTab[active="true"] {
+            background-color: #1a2a3a;
+            color: #64b5f6;
+            border-bottom: 2px solid #64b5f6;
+        }
+
+        /* ── Session box (timer card) ── */
+        #SessionBox {
+            border-radius: 10px;
+            padding: 8px;
+            border: 1px solid #2a2a2a;
+        }
+        #SessionBox[sessionType="focus"] {
+            background-color: #141414;
+            border-color: #2a2a2a;
+        }
+        #SessionBox[sessionType="short_break"] {
+            background-color: #0f1a14;
+            border-color: #1a3a28;
+        }
+        #SessionBox[sessionType="long_break"] {
+            background-color: #0f1420;
+            border-color: #1a2a4a;
+        }
+
+        /* ── Timer labels ── */
+        #SessionLabel {
+            font-size: 15px;
+            font-weight: 600;
+            margin: 4px 0;
+            color: #909090;
+            background: transparent;
+        }
+        #TimeLabel {
+            font-size: 42px;
+            font-weight: 700;
+            color: #f0f0f0;
+            background: transparent;
+        }
+        #RingWrapper, #TimerContainer { background: transparent; }
+        #CycleLabel {
+            font-size: 12px;
+            margin: 2px 0;
+            color: #606060;
+            background: transparent;
+        }
+
+        /* ── Cycle +/- buttons ── */
+        #CycleButton {
+            border: 1px solid #2a2a2a;
+            border-radius: 12px;
+            background-color: #161616;
+            color: #707070;
+            font-size: 14px;
+            font-weight: 700;
+            padding: 0;
+        }
+        #CycleButton:hover { background-color: #1e1e1e; color: #64b5f6; }
+
+        /* ── Control buttons ── */
+        #PrimaryButton {
+            background-color: #1a3050;
+            color: #64b5f6;
+            border: 1px solid #264a70;
+            border-radius: 6px;
+            padding: 8px 18px;
+            font-size: 14px;
+            font-weight: 700;
+        }
+        #PrimaryButton:hover { background-color: #1e3a5f; border-color: #3a6090; }
+        #PrimaryButton:pressed { background-color: #0f1e30; }
+
+        #SecondaryButton {
+            background-color: #161616;
+            color: #a0a0a0;
+            border: 1px solid #2a2a2a;
+            border-radius: 6px;
+            padding: 8px 18px;
+            font-size: 14px;
+            font-weight: 600;
+        }
+        #SecondaryButton:hover { background-color: #1e1e1e; border-color: #3a3a3a; }
+        #SecondaryButton:pressed { background-color: #0a0a0a; }
+
+        /* ── Today's Progress card ── */
+        #TodayCard {
+            background-color: #141414;
+            border: 1px solid #2a2a2a;
+            border-radius: 8px;
+        }
+        #TodayHeader {
+            font-size: 13px;
+            font-weight: 700;
+            color: #909090;
+            background: transparent;
+            margin-bottom: 2px;
+        }
+        #TodayStatValue {
+            font-size: 20px;
+            font-weight: 700;
+            color: #64b5f6;
+            background: transparent;
+        }
+        #TodayStatLabel {
+            font-size: 11px;
+            color: #505050;
+            background: transparent;
+        }
+        #StatSeparator {
+            background-color: #2a2a2a;
+            max-height: 32px;
+        }
+
+        /* ── Daily progress bar ── */
+        #DailyProgress {
+            background-color: #1a1a1a;
+            border: none;
+            border-radius: 3px;
+        }
+        #DailyProgress::chunk {
+            background-color: #2979ff;
+            border-radius: 3px;
+        }
+
+        /* ── History ── */
+        #HistoryGroup {
+            border: 1px solid #2a2a2a;
+            border-radius: 6px;
+            margin-top: 8px;
+            color: #909090;
+            font-weight: 600;
+        }
+        QGroupBox::title {
+            subcontrol-origin: margin;
+            left: 10px;
+            padding: 0 4px;
+        }
+        #HistoryOverallLabel {
+            font-size: 12px;
+            margin: 2px 2px 4px 2px;
+            color: #505050;
+        }
+        QListWidget {
+            background-color: #111111;
+            border: 1px solid #2a2a2a;
+            border-radius: 4px;
+            color: #b0b0b0;
+            outline: 0;
+            font-size: 12px;
+        }
+        QListWidget::item {
+            padding: 4px 6px;
+            border-bottom: 1px solid #1a1a1a;
+        }
+        QListWidget::item:selected {
+            background-color: #1a2a3a;
+            color: #64b5f6;
+        }
+        QListWidget::item:focus { outline: none; }
+
+        /* ── Spin boxes ── */
+        QSpinBox {
+            background-color: #141414;
+            color: #e0e0e0;
+            border: 1px solid #2a2a2a;
+            border-radius: 4px;
+            padding: 4px 8px;
+            min-height: 20px;
+        }
+        QSpinBox::up-button, QSpinBox::down-button { width: 0px; border: none; }
+        QSpinBox::up-arrow, QSpinBox::down-arrow { image: none; width: 0px; height: 0px; }
+
+        /* ── Combo boxes ── */
+        QComboBox {
+            background-color: #141414;
+            color: #e0e0e0;
+            border: 1px solid #2a2a2a;
+            border-radius: 4px;
+            padding: 4px 8px;
+            min-height: 20px;
+        }
+        QComboBox:hover { border-color: #3a3a3a; }
+        QComboBox::drop-down {
+            subcontrol-origin: padding;
+            subcontrol-position: top right;
+            width: 20px;
+            border-left: 1px solid #2a2a2a;
+            background-color: #1a1a1a;
+        }
+        QComboBox::down-arrow { image: none; width: 0px; height: 0px; }
+        QComboBox QAbstractItemView {
+            background-color: #141414;
+            color: #e0e0e0;
+            border: 1px solid #2a2a2a;
+            selection-background-color: #1a2a3a;
+            selection-color: #64b5f6;
+        }
+
+        /* ── Check boxes ── */
+        QCheckBox { color: #e0e0e0; spacing: 8px; }
+        QCheckBox::indicator {
+            width: 14px; height: 14px;
+            border: 1px solid #2a2a2a;
+            border-radius: 3px;
+            background-color: #141414;
+        }
+        QCheckBox::indicator:checked {
+            background-color: #2979ff;
+            border-color: #448aff;
+        }
+        QCheckBox::indicator:hover { border-color: #3a3a3a; }
+
+        /* ── Scrollbars ── */
+        QScrollBar:vertical {
+            background-color: transparent; width: 7px; border: none; margin: 0;
+        }
+        QScrollBar::handle:vertical {
+            background-color: #2a2a2a; border-radius: 3px; min-height: 20px;
+        }
+        QScrollBar::handle:vertical:hover { background-color: #3a3a3a; }
+        QScrollBar:horizontal {
+            background-color: transparent; height: 7px; border: none; margin: 0;
+        }
+        QScrollBar::handle:horizontal {
+            background-color: #2a2a2a; border-radius: 3px; min-width: 20px;
+        }
+        QScrollBar::handle:horizontal:hover { background-color: #3a3a3a; }
+        QScrollBar::add-line:vertical, QScrollBar::sub-line:vertical,
+        QScrollBar::add-line:horizontal, QScrollBar::sub-line:horizontal {
+            width: 0px; height: 0px;
+        }
+        QScrollBar::add-page:vertical, QScrollBar::sub-page:vertical,
+        QScrollBar::add-page:horizontal, QScrollBar::sub-page:horizontal {
+            background: transparent;
+        }
+
+        /* ── Dialog buttons ── */
+        QPushButton {
+            background-color: #161616;
+            color: #a0a0a0;
+            border: 1px solid #2a2a2a;
+            border-radius: 5px;
+            padding: 6px 14px;
+            font-size: 13px;
+        }
+        QPushButton:hover { background-color: #1e1e1e; border-color: #3a3a3a; }
+        QPushButton:pressed { background-color: #0a0a0a; color: #64b5f6; }
+        """
+
+    def _update_session_tab_highlight(self):
+        """Updates the active state on session tab buttons."""
+        current = self.timer.current_session_type
+        for btn, stype in [
+            (self.focus_session_button, "Focus"),
+            (self.short_break_button, "Short Break"),
+            (self.long_break_button, "Long Break"),
+        ]:
+            btn.setProperty("active", current == stype)
+            btn.style().unpolish(btn)
+            btn.style().polish(btn)
+
+    def _update_circular_progress_colors(self):
+        """Sets the circular progress ring colors based on session type and theme."""
+        session = self.timer.current_session_type
+        if self._theme == "runescape":
+            colors = {
+                "Focus": ("#e6a519", "rgba(230, 165, 25, 25)"),
+                "Short Break": ("#4a9d6a", "rgba(74, 157, 106, 25)"),
+                "Long Break": ("#4a7db8", "rgba(74, 125, 184, 25)"),
+            }
+        else:
+            colors = {
+                "Focus": ("#64b5f6", "rgba(100, 181, 246, 20)"),
+                "Short Break": ("#66bb6a", "rgba(102, 187, 106, 20)"),
+                "Long Break": ("#7e57c2", "rgba(126, 87, 194, 20)"),
+            }
+        arc, track = colors.get(session, colors["Focus"])
+        self.circular_progress.set_arc_color(arc)
+        self.circular_progress.set_track_color(track)
 
     def _set_theme(self, theme: str):
         """Updates the current theme and reapplies styles."""
@@ -774,6 +1107,7 @@ class XPWasteWindow(QMainWindow):
         self._theme = theme
         self._apply_theme()
         self._refresh_history_list()
+        self._update_today_card()
 
     def _play_notification_sound(self):
         """Plays the configured notification sound."""
@@ -813,8 +1147,8 @@ It helps you stay consistent, track progress, and reduce downtime between traini
 <li>Timer Settings include color mode selection and minimum history log seconds</li>
 <li>Custom notification sounds (wav, mp3, ogg, m4a)</li>
 <li>Session history with second-accurate active study tracking</li>
+<li>Today's Progress card with daily stats and progress bar</li>
 <li>Right-click history entries to remove them</li>
-<li>Simplified total display shown in the History section</li>
 <li>Manual focus/break switching and cycle progress controls</li>
 </ul>
 
@@ -824,13 +1158,31 @@ counts only while the timer is running, so paused time is not included. Use
 minimum history log seconds to avoid tiny history entries. Use right-click on
 history rows to remove specific entries.</em></p>
         """
-        
+
         msg = QMessageBox(self)
         msg.setWindowTitle("About XPWaste")
         msg.setTextFormat(Qt.RichText)
         msg.setText(about_text)
         msg.setStandardButtons(QMessageBox.Ok)
         msg.exec_()
+
+    # ------------------------------------------------------------------ #
+    # Today's Progress
+    # ------------------------------------------------------------------ #
+    def _update_today_card(self):
+        """Refreshes the Today's Progress card with current data."""
+        today_seconds = self.history_manager.get_total_study_seconds_today()
+        today_sessions = self.history_manager.get_focus_session_count_today()
+        overall_seconds = self.history_manager.get_total_study_seconds_overall()
+
+        self.today_time_value.setText(self._format_duration(today_seconds))
+        self.today_sessions_value.setText(str(today_sessions))
+        self.today_total_value.setText(self._format_duration(overall_seconds))
+
+        # Progress bar: fraction of a 2-hour daily goal (7200s)
+        daily_goal = 7200
+        pct = min(100, int((today_seconds / daily_goal) * 100)) if daily_goal > 0 else 0
+        self.daily_progress.setValue(pct)
 
     # ------------------------------------------------------------------ #
     # Button handlers
@@ -853,6 +1205,7 @@ history rows to remove specific entries.</em></p>
     def _handle_reset(self):
         self.timer.reset()
         self._update_start_pause_button()
+        self._update_circular_progress_value()
 
     def _handle_skip(self):
         if self._skip_increments_cycle and self.timer.current_session_type == "Focus":
@@ -863,12 +1216,16 @@ history rows to remove specific entries.</em></p>
             self.timer.skip_current_session()
         self._update_cycle_label()
         self._update_start_pause_button()
+        self._update_today_card()
 
     def _handle_force_session(self, session_type: str):
         """Manually switches to a specific session type."""
         self.timer.force_session_type(session_type)
         self._update_cycle_label()
         self._update_start_pause_button()
+        self._update_session_tab_highlight()
+        self._update_circular_progress_colors()
+        self._update_circular_progress_value()
 
     def _handle_cycle_increment(self):
         """Increment the current cycle count."""
@@ -916,6 +1273,7 @@ history rows to remove specific entries.</em></p>
     # ------------------------------------------------------------------ #
     def _on_countdown_updated(self, remaining_seconds):
         self.time_label.setText(self._format_time(remaining_seconds))
+        self._update_circular_progress_value()
 
     def _on_session_changed(self, session_type):
         # Play notification sound
@@ -923,12 +1281,15 @@ history rows to remove specific entries.</em></p>
 
         # Pause timer so user must manually start next session
         self.timer.pause()
-        
-        self.session_label.setText(f"{session_type} Session")
+
+        self.session_label.setText(f"{session_type}")
         self._update_session_background(session_type)
+        self._update_session_tab_highlight()
+        self._update_circular_progress_colors()
         self._update_cycle_label()
         self._last_session_type = session_type
         self._update_start_pause_button()
+        self._update_today_card()
 
     def _on_focus_session_completed(self, start_iso, end_iso, duration_seconds):
         """
@@ -964,20 +1325,13 @@ history rows to remove specific entries.</em></p>
         self._add_history_item_to_list(session_data)
         self._update_total_time_label()
         self._update_cycle_label()
+        self._update_today_card()
 
     # ------------------------------------------------------------------ #
     # History helpers
     # ------------------------------------------------------------------ #
     def _add_history_item_to_list(self, session):
-        """
-        Adds a single session entry to the history list widget at the top.
-
-        Expected keys in `session`:
-            - date (str)
-            - start_time (str)
-            - end_time (str)
-            - duration (int, minutes)
-        """
+        """Adds a single session entry to the history list widget at the top."""
         text = self._format_history_item_text(session)
         item = QListWidgetItem(text)
         self.history_list.insertItem(0, item)  # Insert at top instead of bottom
@@ -1011,6 +1365,7 @@ history rows to remove specific entries.</em></p>
         if self.history_manager.remove_session_at(history_index):
             self._refresh_history_list()
             self._update_total_time_label()
+            self._update_today_card()
 
     def _format_history_item_text(self, session):
         """Returns display text for a history row."""
@@ -1046,6 +1401,23 @@ history rows to remove specific entries.</em></p>
         current_number = max(0, min(current_number, per_cycle))
 
         self.cycle_label.setText(f"Cycle: {current_number} / {per_cycle}")
+
+    # ------------------------------------------------------------------ #
+    # Circular progress
+    # ------------------------------------------------------------------ #
+    def _update_circular_progress_value(self):
+        """Updates the circular progress ring based on remaining time."""
+        session = self.timer.current_session_type
+        if session == "Focus":
+            total = self.timer.FOCUS_TIME * 60
+        elif session == "Short Break":
+            total = self.timer.SHORT_BREAK_TIME * 60
+        else:
+            total = self.timer.LONG_BREAK_TIME * 60
+
+        remaining = self.timer.time_remaining
+        progress = remaining / total if total > 0 else 1.0
+        self.circular_progress.set_progress(progress)
 
     # ------------------------------------------------------------------ #
     # Utility
@@ -1087,7 +1459,7 @@ history rows to remove specific entries.</em></p>
 class DurationSettingsDialog(QDialog):
     """Dialog window for adjusting XPWaste durations and cycle length."""
 
-    def __init__(self, focus_minutes, short_break_minutes, long_break_minutes, cycle_length, 
+    def __init__(self, focus_minutes, short_break_minutes, long_break_minutes, cycle_length,
                  notification_sound="system", custom_sound_file=None, skip_increments_cycle=False,
                  minimum_log_seconds=60, current_theme="runescape", parent=None):
         super().__init__(parent)
@@ -1129,18 +1501,17 @@ class DurationSettingsDialog(QDialog):
             self.sound_combo.setCurrentIndex(1)
         else:
             self.sound_combo.setCurrentIndex(2)
-        self._apply_sound_combo_style()
-            
+
         self.sound_file_button = QPushButton("Browse...")
         self.sound_file_button.clicked.connect(self._browse_sound_file)
         self.custom_sound_file = custom_sound_file
-        
+
         # Update button text if file is already selected
         if self.custom_sound_file:
             import os
             filename = os.path.basename(self.custom_sound_file)
             self.sound_file_button.setText(f"Selected: {filename}")
-        
+
         # Skip behavior setting
         self.skip_checkbox = QCheckBox("Skip increments cycle count")
         self.skip_checkbox.setChecked(skip_increments_cycle)
@@ -1174,81 +1545,10 @@ class DurationSettingsDialog(QDialog):
         buttons.rejected.connect(self.reject)
         layout.addWidget(buttons)
 
-    def _apply_sound_combo_style(self):
-        """Ensure the sound dropdown and popup match the selected app theme."""
-        theme = getattr(self.parent(), "_theme", "runescape")
-        if theme == "runescape":
-            combo_style = """
-            QComboBox {
-                background-color: #1a1a1a;
-                color: #d8ccb2;
-                border: 1px solid #3a3125;
-                border-radius: 4px;
-                padding: 4px 8px;
-                min-height: 20px;
-            }
-            QComboBox:hover {
-                border-color: #694d23;
-            }
-            QComboBox::drop-down {
-                subcontrol-origin: padding;
-                subcontrol-position: top right;
-                width: 20px;
-                border-left: 1px solid #3a3125;
-                background-color: #2b251b;
-            }
-            QComboBox::down-arrow {
-                image: none;
-                width: 0px;
-                height: 0px;
-            }
-            QComboBox QAbstractItemView {
-                background-color: #161616;
-                color: #d8ccb2;
-                border: 1px solid #3a3125;
-                selection-background-color: #2b2218;
-                selection-color: #e6a519;
-            }
-            """
-        else:
-            combo_style = """
-            QComboBox {
-                background-color: #1e1e1e;
-                color: #f0f0f0;
-                border: 1px solid #333333;
-                border-radius: 4px;
-                padding: 4px 8px;
-                min-height: 20px;
-            }
-            QComboBox:hover {
-                border-color: #555555;
-            }
-            QComboBox::drop-down {
-                subcontrol-origin: padding;
-                subcontrol-position: top right;
-                width: 20px;
-                border-left: 1px solid #333333;
-                background-color: #2d2d2d;
-            }
-            QComboBox::down-arrow {
-                image: none;
-                width: 0px;
-                height: 0px;
-            }
-            QComboBox QAbstractItemView {
-                background-color: #1e1e1e;
-                color: #f0f0f0;
-                border: 1px solid #333333;
-                selection-background-color: #3a3a3a;
-                selection-color: #ffffff;
-            }
-            """
-        self.sound_combo.setStyleSheet(combo_style)
-        
     def _browse_sound_file(self):
         """Opens a file dialog to select a custom sound file."""
         file_path, _ = QFileDialog.getOpenFileName(
-            self, "Select Sound File", "", 
+            self, "Select Sound File", "",
             "Sound Files (*.wav *.mp3 *.ogg *.m4a);;All Files (*)"
         )
         if file_path:
@@ -1263,7 +1563,7 @@ class DurationSettingsDialog(QDialog):
         sound_options = ["system", "custom", "none"]
         sound_setting = sound_options[self.sound_combo.currentIndex()]
         theme_setting = "runescape" if self.theme_combo.currentIndex() == 0 else "dark"
-        
+
         return (
             self.focus_spin.value(),
             self.short_break_spin.value(),
@@ -1283,11 +1583,10 @@ def main():
     if os.path.exists(icon_path):
         app.setWindowIcon(QIcon(icon_path))
     window = XPWasteWindow()
-    window.resize(480, 600)
+    window.resize(420, 720)
     window.show()
     sys.exit(app.exec_())
 
 
 if __name__ == "__main__":
     main()
-
